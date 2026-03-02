@@ -79,10 +79,10 @@ ERROR_INDICATORS = re.compile(
 # not a real runtime error. These override ERROR_INDICATORS matches.
 # Example: `except Exception:` in source code is not an actual exception.
 CODE_CONTENT_PATTERNS = re.compile(
-    r"(^\s*except\s+\w+|"                       # Python exception handler syntax
-    r"\w+_(?:failed|error|failure)(?:\W|$)|"     # snake_case identifier (metric name)
-    r'"(?:failed|error|failure)"|'               # Quoted string literal in code
-    r'(?:Error|error):\s*""\s*$)',               # Empty error field (Last Error: "")
+    r"(^\s*except\s+\w+|"  # Python exception handler syntax
+    r"\w+_(?:failed|error|failure)(?:\W|$)|"  # snake_case identifier (metric name)
+    r'"(?:failed|error|failure)"|'  # Quoted string literal in code
+    r'(?:Error|error):\s*""\s*$)',  # Empty error field (Last Error: "")
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -444,6 +444,44 @@ def purge_false_errors(client, dry_run: bool) -> dict:
             f"  {GREEN}✓{RESET} No false positives found — all {stats['kept']} are real"
         )
 
+    # After purge, rename remaining error_fix → error_pattern (BUG-200)
+    # These are real error captures that have the old type name.
+    # The error_store_async.py fix (line 417) now stores new captures as
+    # error_pattern, but existing entries need this rename for consistency.
+    rename_filter = Filter(
+        must=[
+            FieldCondition(
+                key="type",
+                match=MatchValue(value="error_fix"),
+            )
+        ]
+    )
+    rename_result = client.scroll(
+        collection_name="code-patterns",
+        scroll_filter=rename_filter,
+        limit=1000,
+        with_payload=False,
+        with_vectors=False,
+    )
+    rename_ids = [p.id for p in rename_result[0]]
+    stats["renamed"] = len(rename_ids)
+
+    if rename_ids and not dry_run:
+        for pid in rename_ids:
+            client.set_payload(
+                collection_name="code-patterns",
+                payload={"type": "error_pattern"},
+                points=[pid],
+            )
+        print(f"  {GREEN}✓{RESET} Renamed {len(rename_ids)} error_fix → error_pattern")
+    elif dry_run and rename_ids:
+        print(
+            f"  {GRAY}[DRY RUN] Would rename {len(rename_ids)} "
+            f"error_fix → error_pattern{RESET}"
+        )
+    else:
+        print(f"  {GREEN}✓{RESET} No error_fix entries to rename")
+
     return stats
 
 
@@ -565,21 +603,13 @@ def main():
                     f"{YELLOW}WARNING: Shell env QDRANT_API_KEY (len={len(shell_key)}) "
                     f"overrides .env value (len={len(dotenv_key)}){RESET}"
                 )
-                print(
-                    "  pydantic-settings priority: shell env > .env file"
-                )
-                print(
-                    "  If you get 401 errors, fix with:"
-                )
-                print(
-                    "    unset QDRANT_API_KEY"
-                )
-                print(
-                    "  or sync to container key:"
-                )
+                print("  pydantic-settings priority: shell env > .env file")
+                print("  If you get 401 errors, fix with:")
+                print("    unset QDRANT_API_KEY")
+                print("  or sync to container key:")
                 print(
                     '    export QDRANT_API_KEY="$(docker exec ai-memory-qdrant '
-                    "env | grep QDRANT__SERVICE__API_KEY | cut -d= -f2)\""
+                    'env | grep QDRANT__SERVICE__API_KEY | cut -d= -f2)"'
                 )
                 print()
 
@@ -657,6 +687,7 @@ def main():
     print(f"  Points migrated    : {migration_stats.get('migrated', 0)}")
     print(f"  Deleted from disc. : {migration_stats.get('deleted', 0)}")
     print(f"  False errors purged: {purge_stats.get('purged', 0)}")
+    print(f"  Errors renamed     : {purge_stats.get('renamed', 0)}")
     print(f"  Real errors kept   : {purge_stats.get('kept', 0)}")
     print(f"  Duration           : {duration:.1f}s")
     print(f"{'=' * 60}\n")

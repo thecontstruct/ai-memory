@@ -62,6 +62,11 @@ Injection quality sprint (PLAN-010): Dedicated `github` Qdrant collection for Gi
 - BUG-198/199: Langfuse trace event fixes (PM #135)
 - BUG-200: Error pattern capture false positives — 100% of code-patterns were garbage (PLAN-010)
 - BUG-201: Tier 2 injection missing type filter — injected "nothing to add" at 99% similarity (PLAN-010)
+- BUG-204: Langfuse trace visibility — removed 15 hardcoded `[:300]` truncations across 5 hook scripts. `TRACE_CONTENT_MAX=10000` standardized everywhere. Full pipeline content now visible in Langfuse traces.
+- BUG-205: Installer Option 1 (`update_shared_scripts()`) now copies all files recursively — previously used `*.py` glob that missed `scripts/memory/` (33 files) and `.sh` files (6 files). Added `chmod +x` parity with `copy_files()`.
+- TD-237: Classifier LLM prompt now includes `error_pattern` type definition, preventing reclassification to wrong type
+- CodeQL: Removed partial API key logging from migration script (CWE-117)
+- Migration script now renames remaining `error_fix` → `error_pattern` in code-patterns after purging false positives
 - E2E test screenshots directory fixture (TD-219)
 - 11 E2E test failures: search model routing, Grafana selectors, panel error detection
 - Ruff lint errors in injection.py and search.py
@@ -80,13 +85,19 @@ Injection quality sprint (PLAN-010): Dedicated `github` Qdrant collection for Gi
    ```
    Option 1 updates hooks and code only — preserves running containers, volumes, and data.
 
-2. **If you use GitHub sync**, rebuild the container (code is baked into the Docker image, not volume-mounted):
+2. Rebuild containers that bake source code into Docker images:
    ```bash
    cd ~/.ai-memory/docker
+   # Classifier worker (has updated prompts + TRACE_CONTENT_MAX)
+   docker compose build --no-cache classifier-worker
+   docker compose up -d classifier-worker
+   ```
+   **If you also use GitHub sync**:
+   ```bash
    docker compose build --no-cache github-sync
    docker compose --profile github up -d github-sync
    ```
-   Without this, the github-sync container continues writing to the old `discussions` collection.
+   Without rebuilding, these containers continue using old code (stale type names, truncated traces).
    **Important**: Always run `docker compose` from `~/.ai-memory/docker/` (not the source repo) to ensure the correct `.env` is used.
 
 3. Run the migration script manually (installer does NOT run migrations):
@@ -107,6 +118,7 @@ Injection quality sprint (PLAN-010): Dedicated `github` Qdrant collection for Gi
    - Creates the `github` collection if it doesn't exist
    - Moves ~4,000 `github_code_blob` points from `discussions` → `github`
    - Purges false-positive `error_fix` entries from `code-patterns`
+   - Renames remaining `error_fix` → `error_pattern` (correct type name per BUG-200)
    - Idempotent — safe to run multiple times
    - Use `--skip-backup` to skip the automatic pre-migration backup
 
