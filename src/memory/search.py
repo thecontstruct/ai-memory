@@ -14,6 +14,7 @@ Best Practices (2025/2026):
 
 import contextlib
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -481,7 +482,7 @@ class MemorySearch:
                     data={
                         "input": query[:TRACE_CONTENT_MAX],
                         "output": (
-                            _result_previews[:10000]
+                            _result_previews[:TRACE_CONTENT_MAX]
                             if _result_previews
                             else f"No results (collection={collection})"
                         ),
@@ -499,6 +500,7 @@ class MemorySearch:
                             "top_score": round(_top_score, 4),
                         },
                     },
+                    session_id=os.environ.get("CLAUDE_SESSION_ID", ""),
                     project_id=group_id,
                     start_time=_trace_start,
                     end_time=_trace_end,
@@ -823,7 +825,7 @@ class MemorySearch:
                     data={
                         "input": query[:TRACE_CONTENT_MAX],
                         "output": (
-                            _dual_previews[:10000]
+                            _dual_previews[:TRACE_CONTENT_MAX]
                             if _dual_previews
                             else "No results from dual search"
                         ),
@@ -836,6 +838,7 @@ class MemorySearch:
                             "fast_mode": fast_mode,
                         },
                     },
+                    session_id=os.environ.get("CLAUDE_SESSION_ID", ""),
                     project_id=effective_group_id,
                     start_time=_trace_start,
                     end_time=_trace_end,
@@ -943,7 +946,7 @@ class MemorySearch:
                         data={
                             "input": query[:TRACE_CONTENT_MAX],
                             "output": (
-                                _casc_previews[:10000]
+                                _casc_previews[:TRACE_CONTENT_MAX]
                                 if _casc_previews
                                 else "No results"
                             ),
@@ -958,6 +961,7 @@ class MemorySearch:
                                 "search_type": "cascading",
                             },
                         },
+                        session_id=os.environ.get("CLAUDE_SESSION_ID", ""),
                         project_id=group_id,
                         start_time=_trace_start,
                         end_time=_trace_end,
@@ -1030,7 +1034,7 @@ class MemorySearch:
                     data={
                         "input": query[:TRACE_CONTENT_MAX],
                         "output": (
-                            _casc_exp_previews[:10000]
+                            _casc_exp_previews[:TRACE_CONTENT_MAX]
                             if _casc_exp_previews
                             else "No results"
                         ),
@@ -1045,6 +1049,7 @@ class MemorySearch:
                             "search_type": "cascading",
                         },
                     },
+                    session_id=os.environ.get("CLAUDE_SESSION_ID", ""),
                     project_id=group_id,
                     start_time=_trace_start,
                     end_time=_trace_end,
