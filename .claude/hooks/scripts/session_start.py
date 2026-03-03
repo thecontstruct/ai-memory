@@ -10,6 +10,9 @@ Best Practices (2026):
 - https://python-client.qdrant.tech/ (Qdrant Python Client 1.16+)
 - https://signoz.io/guides/python-logging-best-practices/ (Structured Logging 2025)
 """
+# LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
+# SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
+# CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
 import json
 import logging

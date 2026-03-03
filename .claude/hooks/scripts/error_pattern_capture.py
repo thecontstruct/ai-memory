@@ -19,6 +19,9 @@ Exit Codes:
 Performance: Must complete in <500ms (NFR-P1)
 Pattern: Fork to background using subprocess.Popen + start_new_session=True
 """
+# LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
+# SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
+# CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
 import json
 import logging

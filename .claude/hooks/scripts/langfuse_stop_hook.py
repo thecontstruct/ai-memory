@@ -12,6 +12,10 @@ Fixes: BUG-151, BUG-152, BUG-154, BUG-155, BUG-156, BUG-157
 PLAN-008 / SPEC-022 S2
 """
 
+# LANGFUSE: Uses direct SDK (Path B). See LANGFUSE-INTEGRATION-SPEC.md §3.2, §7.1
+# SDK VERSION: V3 ONLY. Use get_client(), start_as_current_observation(), propagate_attributes().
+# Do NOT use Langfuse() constructor, start_span(), start_generation(), or langfuse_context.
+
 import json
 import logging
 import os
@@ -285,9 +289,8 @@ def main():
             )
 
         from memory.langfuse_config import get_langfuse_client
-
-        client = get_langfuse_client()
-        if client is None:
+        # Check if Langfuse is enabled (config check only)
+        if get_langfuse_client() is None:
             logger.warning(
                 "Langfuse client unavailable — session trace skipped "
                 "(check LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY)"
@@ -344,69 +347,54 @@ def main():
         # Deterministic trace ID for dedup (replaces Langfuse.create_trace_id)
         trace_id = _deterministic_trace_id(session_id) if session_id else None
 
-        # Create root span WITH input/output (BUG-152)
-        span_kwargs = {
-            "name": "claude_code_session",
-            "input": (
-                first_user_text[:LANGFUSE_PAYLOAD_MAX_CHARS]
-                if first_user_text
-                else None
-            ),
-            "output": (
-                last_assistant_text[:LANGFUSE_PAYLOAD_MAX_CHARS]
-                if last_assistant_text
-                else None
-            ),
-            "metadata": {
-                **trace_metadata,
-                "turn_count": len(turns),
-                "message_count": len(messages),
-                "start_time": now.isoformat(),
-            },
-        }
+        # ── V3 SDK: Create root observation + child spans ──
+        # LANGFUSE-INTEGRATION-SPEC.md §7.1: Uses start_as_current_observation (V3)
+        from langfuse import get_client as _get_v3_client, propagate_attributes
+
+        langfuse_v3 = _get_v3_client()
+
+        trace_kwargs = {}
         if trace_id:
-            span_kwargs["trace_id"] = trace_id
-        root_span = client.start_span(**span_kwargs)
+            trace_kwargs["trace_context"] = {"trace_id": trace_id}
 
-        # Update the auto-created trace with session metadata
-        root_span.update_trace(
+        with langfuse_v3.start_as_current_observation(
+            as_type="span",
             name="claude_code_session",
-            session_id=session_id or None,
-            metadata={**trace_metadata, "turn_count": len(turns)},
-            tags=["session_trace", "tier1"],
-        )
+            input=first_user_text[:LANGFUSE_PAYLOAD_MAX_CHARS] if first_user_text else None,
+            output=last_assistant_text[:LANGFUSE_PAYLOAD_MAX_CHARS] if last_assistant_text else None,
+            **trace_kwargs,
+        ) as root_span:
+            # Set session and trace attributes via propagate_attributes (V3 pattern)
+            with propagate_attributes(
+                session_id=session_id or None,
+                user_id="claude_code_user",
+            ):
+                root_span.update_trace(
+                    name="claude_code_session",
+                    metadata={**trace_metadata, "turn_count": len(turns)},
+                    tags=["session_trace", "tier1"],
+                )
 
-        # ── BUG-154: Child spans with BOTH input and output ──
-        for i, turn in enumerate(turns, 1):
-            token_meta = {}
-            if turn.get("user_tokens") is not None:
-                token_meta["user_tokens"] = turn["user_tokens"]
-            if turn.get("assistant_tokens") is not None:
-                token_meta["assistant_tokens"] = turn["assistant_tokens"]
+                # ── BUG-154: Child spans with BOTH input and output ──
+                for i, turn in enumerate(turns, 1):
+                    token_meta = {}
+                    if turn.get("user_tokens") is not None:
+                        token_meta["user_tokens"] = turn["user_tokens"]
+                    if turn.get("assistant_tokens") is not None:
+                        token_meta["assistant_tokens"] = turn["assistant_tokens"]
 
-            turn_input = turn.get("user_input") or ""
-            turn_output = turn.get("assistant_output") or ""
+                    turn_input = turn.get("user_input") or ""
+                    turn_output = turn.get("assistant_output") or ""
 
-            child_kwargs = {
-                "name": f"turn_{i}",
-                "input": (
-                    turn_input[:LANGFUSE_PAYLOAD_MAX_CHARS] if turn_input else None
-                ),
-                "metadata": token_meta,
-            }
-            if hasattr(root_span, "trace_id"):
-                child_kwargs["trace_id"] = root_span.trace_id
-            if hasattr(root_span, "id"):
-                child_kwargs["parent_observation_id"] = root_span.id
-
-            turn_span = client.start_span(**child_kwargs)
-            # BUG-154: Set output before ending span
-            turn_span.update(
-                output=turn_output[:LANGFUSE_PAYLOAD_MAX_CHARS] if turn_output else None
-            )
-            turn_span.end()
-
-        root_span.end()
+                    with langfuse_v3.start_as_current_observation(
+                        as_type="span",
+                        name=f"turn_{i}",
+                        input=turn_input[:LANGFUSE_PAYLOAD_MAX_CHARS] if turn_input else None,
+                    ) as turn_span:
+                        turn_span.update(
+                            output=turn_output[:LANGFUSE_PAYLOAD_MAX_CHARS] if turn_output else None,
+                            metadata=token_meta,
+                        )
 
         # ── BUG-155: flush() with timeout guard + logging ──
         logger.info(
@@ -426,7 +414,7 @@ def main():
             old_handler = signal.signal(signal.SIGALRM, _flush_timeout_handler)
             signal.alarm(FLUSH_TIMEOUT_SECONDS)
             try:
-                client.flush()
+                langfuse_v3.flush()
                 logger.info("Langfuse flush completed successfully")
             except TimeoutError:
                 logger.warning(
@@ -439,7 +427,7 @@ def main():
                 signal.alarm(remaining)  # Restore global safety timeout
         except (AttributeError, OSError):
             # SIGALRM not available on Windows — flush without timeout
-            client.flush()
+            langfuse_v3.flush()
 
         logger.info(
             "Langfuse trace created: session=%s turns=%d",

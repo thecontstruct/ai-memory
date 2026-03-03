@@ -4,6 +4,9 @@ Uses OpenAI API for GPT-based classification.
 
 TECH-DEBT-069: LLM-based memory classification system.
 """
+# LANGFUSE: Uses direct SDK (Path B). See LANGFUSE-INTEGRATION-SPEC.md §3.2, §7.5
+# SDK VERSION: V3 ONLY. Use get_client(), start_as_current_observation(), propagate_attributes().
+# Do NOT use Langfuse() constructor, start_span(), start_generation(), or langfuse_context.
 
 import json
 import logging

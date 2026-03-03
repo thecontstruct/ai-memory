@@ -22,6 +22,9 @@ Reference:
 - BP-039: Async Background Task Processing for Python (2025)
 - BUG-024: LLM Classifier works but no daemon processes the queue
 """
+# LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
+# SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
+# CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
 import asyncio
 import os

@@ -18,6 +18,10 @@ Error Handling:
 - Resource cleanup: try/finally for async clients
 """
 
+# LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §7.4
+# SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
+# CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
+
 import asyncio
 import json
 import logging
@@ -32,11 +36,16 @@ from ...embeddings import EmbeddingClient
 from ...models import MemoryType
 from ...qdrant_client import get_qdrant_client
 from ...storage import MemoryStorage
-from ...trace_buffer import emit_trace_event
+try:
+    from ...trace_buffer import emit_trace_event
+except ImportError:
+    emit_trace_event = None
 from .client import JiraClient
 from .composer import compose_comment_document, compose_issue_document
 
 logger = logging.getLogger(__name__)
+
+TRACE_CONTENT_MAX = 10000  # Max chars for Langfuse input/output fields
 
 __all__ = ["JiraSyncEngine", "SyncResult"]
 
@@ -165,15 +174,20 @@ class JiraSyncEngine:
                 },
             )
             trace_start_time = datetime.now(timezone.utc)
-            emit_trace_event(
-                event_type="jira_sync",
-                data={
-                    "input": f"Syncing issues from {project_key} (mode={mode}, since={updated_since})",
-                    "output": "",
-                    "metadata": {"project": project_key, "mode": mode},
-                },
-                start_time=trace_start_time,
-            )
+            if emit_trace_event:
+                try:
+                    emit_trace_event(
+                        event_type="jira_sync",
+                        data={
+                            "input": f"Syncing issues from {project_key} (mode={mode}, since={updated_since})",
+                            "output": "",
+                            "metadata": {"project": project_key, "mode": mode},
+                        },
+                        session_id="jira_sync",
+                        start_time=trace_start_time,
+                    )
+                except Exception:
+                    pass  # Never crash sync for tracing
 
             # Fetch issues with pagination
             issues = await self.jira_client.search_issues(project_key, updated_since)
@@ -218,22 +232,27 @@ class JiraSyncEngine:
                 },
             )
 
-            emit_trace_event(
-                event_type="jira_sync_complete",
-                data={
-                    "input": f"Syncing issues from {project_key} (mode={mode})",
-                    "output": f"Synced {issues_synced} issues + {comments_synced} comments, {len(errors)} errors in {duration:.1f}s",
-                    "metadata": {
-                        "project": project_key,
-                        "issues_synced": issues_synced,
-                        "comments_synced": comments_synced,
-                        "errors": len(errors),
-                        "duration_seconds": duration,
-                    },
-                },
-                start_time=trace_start_time,
-                end_time=datetime.now(timezone.utc),
-            )
+            if emit_trace_event:
+                try:
+                    emit_trace_event(
+                        event_type="jira_sync_complete",
+                        data={
+                            "input": f"Syncing issues from {project_key} (mode={mode})",
+                            "output": f"Synced {issues_synced} issues + {comments_synced} comments, {len(errors)} errors in {duration:.1f}s",
+                            "metadata": {
+                                "project": project_key,
+                                "issues_synced": issues_synced,
+                                "comments_synced": comments_synced,
+                                "errors": len(errors),
+                                "duration_seconds": duration,
+                            },
+                        },
+                        session_id="jira_sync",
+                        start_time=trace_start_time,
+                        end_time=datetime.now(timezone.utc),
+                    )
+                except Exception:
+                    pass  # Never crash sync for tracing
 
             return SyncResult(
                 issues_synced=issues_synced,
@@ -248,16 +267,21 @@ class JiraSyncEngine:
                 extra={"project": project_key, "error": str(e)},
             )
             duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-            emit_trace_event(
-                event_type="jira_sync_error",
-                data={
-                    "input": f"Syncing issues from {project_key} (mode={mode})",
-                    "output": f"FAILED: {e}",
-                    "metadata": {"project": project_key, "error": str(e)},
-                },
-                start_time=start_time,
-                end_time=datetime.now(timezone.utc),
-            )
+            if emit_trace_event:
+                try:
+                    emit_trace_event(
+                        event_type="jira_sync_error",
+                        data={
+                            "input": f"Syncing issues from {project_key} (mode={mode})",
+                            "output": f"FAILED: {e}",
+                            "metadata": {"project": project_key, "error": str(e)},
+                        },
+                        session_id="jira_sync",
+                        start_time=start_time,
+                        end_time=datetime.now(timezone.utc),
+                    )
+                except Exception:
+                    pass  # Never crash sync for tracing
             return SyncResult(errors=[str(e)], duration_seconds=duration)
 
     async def sync_all_projects(

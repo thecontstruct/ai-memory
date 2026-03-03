@@ -5,6 +5,8 @@ Flushes the on-disk trace buffer to Langfuse on a configurable interval.
 
 SPEC-020 §5 / PLAN-008 / DEC-PLAN008-004
 """
+# LANGFUSE: Trace flush worker (infrastructure). See LANGFUSE-INTEGRATION-SPEC.md §7.6
+# Changes to Langfuse env vars or Docker config MUST be verified against the spec.
 
 import contextlib
 import json
