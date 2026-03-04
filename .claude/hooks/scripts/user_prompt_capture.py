@@ -265,6 +265,8 @@ def main() -> int:
                             "raw_length": len(content),
                             "content_length": len(content),
                             "content_extracted": True,
+                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                         },
                     },
                     trace_id=trace_id,

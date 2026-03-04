@@ -270,6 +270,8 @@ def main() -> int:
                                     "collection": "conventions",
                                     "result_count": len(results),
                                     "file_type": language,
+                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                                 },
                             },
                             trace_id=uuid4().hex,

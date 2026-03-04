@@ -25,6 +25,7 @@ Error Handling:
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -181,7 +182,12 @@ class JiraSyncEngine:
                         data={
                             "input": f"Syncing issues from {project_key} (mode={mode}, since={updated_since})"[:TRACE_CONTENT_MAX],
                             "output": ""[:TRACE_CONTENT_MAX],
-                            "metadata": {"project": project_key, "mode": mode},
+                            "metadata": {
+                                "project": project_key,
+                                "mode": mode,
+                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                            },
                         },
                         session_id="jira_sync",
                         start_time=trace_start_time,
@@ -245,6 +251,8 @@ class JiraSyncEngine:
                                 "comments_synced": comments_synced,
                                 "errors": len(errors),
                                 "duration_seconds": duration,
+                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                             },
                         },
                         session_id="jira_sync",
@@ -274,7 +282,12 @@ class JiraSyncEngine:
                         data={
                             "input": f"Syncing issues from {project_key} (mode={mode})"[:TRACE_CONTENT_MAX],
                             "output": f"FAILED: {e}"[:TRACE_CONTENT_MAX],
-                            "metadata": {"project": project_key, "error": str(e)},
+                            "metadata": {
+                                "project": project_key,
+                                "error": str(e),
+                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                            },
                         },
                         session_id="jira_sync",
                         start_time=start_time,

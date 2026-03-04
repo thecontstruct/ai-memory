@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -421,6 +422,8 @@ def run_freshness_scan(
                     "metadata": {
                         "ground_truth_files": len(ground_truth_map),
                         "group_id": group_id,
+                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                     },
                 },
                 start_time=_trace_start,
@@ -570,6 +573,8 @@ def run_freshness_scan(
                         "expired": expired,
                         "unknown": unknown,
                         "duration_seconds": round(duration, 2),
+                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                     },
                 },
                 start_time=_trace_start,

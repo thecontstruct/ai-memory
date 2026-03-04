@@ -95,25 +95,25 @@ try:
 
             AnthropicInstrumentor().instrument()
             logger.info("langfuse_anthropic_instrumentor_enabled")
-
-            import atexit
-
-            def _langfuse_shutdown():
-                """Flush and shutdown Langfuse client on process exit (Category A-3)."""
-                try:
-                    from langfuse import get_client
-                    client = get_client()
-                    if client:
-                        client.flush()
-                        client.shutdown()
-                except Exception:
-                    pass
-
-            atexit.register(_langfuse_shutdown)
         except ImportError:
             logger.warning(
                 "opentelemetry-instrumentation-anthropic not installed — Anthropic SDK calls will not be traced"
             )
+
+        import atexit
+
+        def _langfuse_shutdown():
+            """Flush and shutdown Langfuse client on process exit."""
+            try:
+                from langfuse import get_client
+                client = get_client()
+                if client:
+                    client.flush()
+                    client.shutdown()
+            except Exception:
+                pass
+
+        atexit.register(_langfuse_shutdown)
 except ImportError:
     pass  # memory.langfuse_config not available
 

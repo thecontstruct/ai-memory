@@ -190,6 +190,8 @@ This session summary was manually saved by the user using /save-memory command.
                             "type": "session",
                             "point_id": str(memory_id),
                             "content_length": len(summary_content),
+                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                         },
                     },
                     trace_id=trace_id,

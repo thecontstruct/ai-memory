@@ -187,7 +187,12 @@ def build_decay_formula(
                     data={
                         "input": f"Decay check for {collection}"[:TRACE_CONTENT_MAX],
                         "output": "Decay disabled — using simple query path"[:TRACE_CONTENT_MAX],
-                        "metadata": {"collection": collection, "decay_enabled": False},
+                        "metadata": {
+                            "collection": collection,
+                            "decay_enabled": False,
+                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                        },
                     },
                     start_time=_trace_start,
                     end_time=datetime.now(timezone.utc),
@@ -313,6 +318,8 @@ def build_decay_formula(
                         "type_overrides": len(half_life_groups),
                         "default_half_life_days": default_hl_days,
                         "prefetch_limit": prefetch_limit,
+                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                     },
                 },
                 start_time=_trace_start,

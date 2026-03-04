@@ -465,6 +465,8 @@ def main() -> int:
                                 "collection": COLLECTION_CONVENTIONS,
                                 "result_count": len(results),
                                 "best_score": best_score,
+                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                             },
                         },
                         span_id=_bp_root_span_id,

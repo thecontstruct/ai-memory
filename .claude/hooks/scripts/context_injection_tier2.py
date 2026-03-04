@@ -193,7 +193,7 @@ def main() -> int:
                 # (replaces Python post-filtering for efficiency).
                 # error_pattern excluded at Qdrant query layer instead of post-processing.
                 if route.collection == COLLECTION_CODE_PATTERNS:
-                    search_kwargs["must_not_types"] = ["error_pattern"]
+                    search_kwargs["must_not_types"] = ["error_pattern", "error_fix"]
                 results = search_client.search(**search_kwargs)
                 for r in results:
                     r["collection"] = route.collection  # Tag with source collection
@@ -219,6 +219,8 @@ def main() -> int:
                                 "error": type(search_err).__name__,
                                 "results_considered": 0,
                                 "results_selected": 0,
+                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                             },
                         },
                         span_id=_tier2_root_span_id,
@@ -360,6 +362,8 @@ def main() -> int:
                             "budget": budget,
                             "best_score": round(best_score, 4),
                             "topic_drift": round(drift, 4),
+                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                         },
                     },
                     span_id=_tier2_root_span_id,
@@ -430,6 +434,8 @@ def main() -> int:
                             "error": type(e).__name__,
                             "results_considered": 0,
                             "results_selected": 0,
+                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                         },
                     },
                     span_id=_tier2_root_span_id if "_tier2_root_span_id" in dir() else None,  # type: ignore[name-defined]

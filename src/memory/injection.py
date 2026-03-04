@@ -427,6 +427,8 @@ def retrieve_bootstrap_context(
                             }
                             for r in results[:20]
                         ],
+                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                     },
                 },
                 project_id=project_name,
@@ -717,6 +719,8 @@ def select_results_greedy(
                                 selected, _selected_token_counts, strict=False
                             )
                         ],
+                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                     },
                 },
                 session_id=os.environ.get("CLAUDE_SESSION_ID"),
@@ -778,6 +782,8 @@ def format_injection_output(
                         "result_count": len(results),
                         "output_chars": len(formatted),
                         "result_types": [r.get("type", "unknown") for r in results],
+                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                     },
                 },
                 session_id=os.environ.get("CLAUDE_SESSION_ID"),

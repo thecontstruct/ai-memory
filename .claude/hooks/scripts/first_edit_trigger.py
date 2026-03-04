@@ -266,6 +266,8 @@ def main() -> int:
                             "metadata": {
                                 "collection": "code-patterns",
                                 "result_count": len(results),
+                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                             },
                         },
                         trace_id=uuid4().hex,

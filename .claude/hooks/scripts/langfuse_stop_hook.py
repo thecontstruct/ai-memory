@@ -334,6 +334,8 @@ def main():
         }
         if os.environ.get("PARZIVAL_ENABLED", "false").lower() == "true":
             trace_metadata["agent_id"] = "parzival"
+        trace_metadata["agent_name"] = os.environ.get("CLAUDE_AGENT_NAME", "main")
+        trace_metadata["agent_role"] = os.environ.get("CLAUDE_AGENT_ROLE", "user")
 
         # ── BUG-152: Derive root span input/output from conversation ──
         first_user_text = ""

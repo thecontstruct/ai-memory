@@ -185,7 +185,7 @@ def main() -> int:
                 group_id=project_name,
                 limit=3,
                 score_threshold=0.5,
-                memory_type="error_pattern",
+                memory_type=["error_pattern", "error_fix"],
             )
 
             if not results:
@@ -250,6 +250,8 @@ def main() -> int:
                                 "result_count": len(results),
                                 "best_score": best_score,
                                 "summary": f"Retrieved {len(results)} similar fixes",
+                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                             },
                         },
                         trace_id=uuid4().hex,
