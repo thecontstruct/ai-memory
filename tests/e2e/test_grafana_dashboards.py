@@ -72,16 +72,16 @@ class TestGrafanaDashboards:
         """Wait for dashboard to load. Returns True if panels rendered viz layer.
 
         Tries to find rendered visualization panels first. If not found
-        (common in CI without Prometheus data), falls back to checking
-        the dashboard loaded at all via networkidle.
+        (common in CI without Prometheus data), gives JS a moment to
+        finish rendering the dashboard chrome.
         """
         try:
             page.wait_for_selector("[data-viz-panel-key]", timeout=timeout)
             return True
         except TimeoutError:
             # Panels didn't render viz (no Prometheus data) — that's OK.
-            # Dashboard structure is still loaded.
-            page.wait_for_load_state("networkidle")
+            # Give Grafana a moment to finish rendering dashboard structure.
+            page.wait_for_timeout(2000)
             return False
 
     # ==================== Folder Tests ====================
@@ -99,7 +99,7 @@ class TestGrafanaDashboards:
         """Verify 'AI Memory Module' folder exists in dashboard list."""
         # Navigate to dashboards page
         grafana_page.goto(f"{self.GRAFANA_BASE_URL}/dashboards")
-        grafana_page.wait_for_load_state("networkidle")
+        grafana_page.wait_for_load_state("domcontentloaded")
 
         # Search for the folder
         search_input = grafana_page.locator('input[placeholder*="Search"]').first
@@ -117,7 +117,7 @@ class TestGrafanaDashboards:
         """Verify AI Memory System - Overview dashboard can be accessed."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.OVERVIEW_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         self._wait_for_dashboard(grafana_page)
@@ -131,7 +131,7 @@ class TestGrafanaDashboards:
         """Verify AI Memory System - Overview dashboard has 10 panels."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.OVERVIEW_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         has_viz = self._wait_for_dashboard(grafana_page)
@@ -151,7 +151,7 @@ class TestGrafanaDashboards:
         """Check if AI Memory System - Overview panels show hard rendering failures."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.OVERVIEW_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         has_viz = self._wait_for_dashboard(grafana_page)
@@ -179,7 +179,7 @@ class TestGrafanaDashboards:
         """Verify template variables are properly configured in AI Memory System - Overview."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.OVERVIEW_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         self._wait_for_dashboard(grafana_page)
@@ -208,7 +208,7 @@ class TestGrafanaDashboards:
         """Check for Prometheus query errors in AI Memory System - Overview panels."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.OVERVIEW_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         has_viz = self._wait_for_dashboard(grafana_page)
@@ -245,7 +245,7 @@ class TestGrafanaDashboards:
         """Verify AI Memory Performance dashboard can be accessed."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.PERFORMANCE_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         self._wait_for_dashboard(grafana_page)
@@ -259,7 +259,7 @@ class TestGrafanaDashboards:
         """Verify AI Memory Performance dashboard has 5 panels."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.PERFORMANCE_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         has_viz = self._wait_for_dashboard(grafana_page)
@@ -279,7 +279,7 @@ class TestGrafanaDashboards:
         """Check if AI Memory Performance panels show hard rendering failures."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.PERFORMANCE_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         has_viz = self._wait_for_dashboard(grafana_page)
@@ -307,7 +307,7 @@ class TestGrafanaDashboards:
         """Check for Prometheus query errors in AI Memory Performance panels."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.PERFORMANCE_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         has_viz = self._wait_for_dashboard(grafana_page)
@@ -344,7 +344,7 @@ class TestGrafanaDashboards:
         """Verify no JavaScript console errors in AI Memory System - Overview dashboard."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.OVERVIEW_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         self._wait_for_dashboard(grafana_page)
@@ -366,7 +366,7 @@ class TestGrafanaDashboards:
         """Verify no JavaScript console errors in AI Memory Performance dashboard."""
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.PERFORMANCE_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         self._wait_for_dashboard(grafana_page)
@@ -394,7 +394,7 @@ class TestGrafanaDashboards:
         """
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.OVERVIEW_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         self._wait_for_dashboard(grafana_page)
@@ -414,7 +414,7 @@ class TestGrafanaDashboards:
         """
         grafana_page.goto(
             f"{self.GRAFANA_BASE_URL}/d/{self.PERFORMANCE_DASHBOARD_UID}",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
         )
 
         self._wait_for_dashboard(grafana_page)
