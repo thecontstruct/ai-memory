@@ -72,7 +72,7 @@ migration-backup*/
 /oversight/
 
 # POV oversight agent (user-specific, not for repo)
-pov/
+/pov/
 
 # Claude Code local settings (user-specific)
 .claude/settings.json
