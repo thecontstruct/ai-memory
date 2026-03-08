@@ -12,9 +12,8 @@ Covers:
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 import github_sync_service
+import pytest
 from github_sync_service import run_sync_cycle
 
 from memory.connectors.github.code_sync import CodeBlobSync

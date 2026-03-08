@@ -7,10 +7,9 @@ Tests verify 2026 best practices:
 - Graceful degradation on network errors
 """
 
+import importlib.util
 from pathlib import Path
 from unittest.mock import Mock, patch
-
-import importlib.util
 
 import httpx
 

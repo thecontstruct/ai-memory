@@ -3,9 +3,8 @@
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 import github_sync_service
+import pytest
 from github_sync_service import handle_signal, main, run_sync_cycle
 
 

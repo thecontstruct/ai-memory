@@ -4,7 +4,6 @@ Tests AC 1.4.3 - Qdrant Client Wrapper functionality.
 """
 
 import sys
-
 from unittest.mock import Mock, patch
 
 from src.memory.config import MemoryConfig

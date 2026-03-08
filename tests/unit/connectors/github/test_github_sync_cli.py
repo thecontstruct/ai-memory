@@ -2,9 +2,8 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 import github_sync
+import pytest
 from github_sync import main
 
 # -- Status Display Tests -----------------------------------------------

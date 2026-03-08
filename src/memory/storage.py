@@ -16,7 +16,13 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct, SparseVector
+from qdrant_client.models import (
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointStruct,
+    SparseVector,
+)
 
 from .chunking import ContentType, IntelligentChunker
 from .config import (

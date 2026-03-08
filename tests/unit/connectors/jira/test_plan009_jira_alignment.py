@@ -11,9 +11,8 @@ Covers:
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-import pytest
-
 import jira_sync
+import pytest
 
 from memory.connectors.jira.sync import JiraSyncEngine
 
