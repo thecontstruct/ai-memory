@@ -3306,6 +3306,29 @@ deploy_ai_memory_skills() {
 
     mkdir -p "$PROJECT_PATH/.claude/skills"
 
+    # V1→V2 skill name cleanup (v2.2.0+): remove old names replaced by aim-* prefix
+    local v1_skill_names=(
+        "best-practices-researcher"
+        "freshness-report"
+        "github-sync"
+        "jira-sync"
+        "memory-purge"
+        "memory-refresh"
+        "memory-settings"
+        "memory-status"
+        "pause-updates"
+        "save-memory"
+        "search-github"
+        "search-jira"
+        "search-memory"
+    )
+    for old_skill in "${v1_skill_names[@]}"; do
+        if [[ -d "$PROJECT_PATH/.claude/skills/$old_skill" ]]; then
+            rm -rf "$PROJECT_PATH/.claude/skills/$old_skill"
+            log_debug "Removed V1 skill: $old_skill (replaced by aim-* equivalent)"
+        fi
+    done
+
     # Remove stale ai-memory skills not in source (R2-NF4: scoped to known prefixes)
     for existing_skill in "$PROJECT_PATH/.claude/skills"/*/; do
         if [[ -d "$existing_skill" ]]; then

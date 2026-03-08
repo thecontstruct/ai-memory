@@ -201,9 +201,9 @@ def _upgrade_hook_commands(settings: dict) -> dict:
                     if match:
                         hook["command"] = _hook_cmd(match.group(1))
 
-    # Matcher is Parzival-aware: update_parzival_settings.py manages expansion
-    # (startup|resume|compact when enabled, resume|compact when disabled).
-    # merge_settings must NOT force a specific matcher — preserve what exists.
+    # Matcher normalization: _normalize_session_start_matcher() strips vestigial
+    # 'startup' trigger on upgrade (v2.2.0+ DEC-054). update_parzival_settings.py
+    # manages env vars only — it does NOT touch hook matchers.
 
     return settings
 
@@ -310,6 +310,33 @@ def _remove_dead_hooks(settings: dict, install_dir: str | None = None) -> dict:
     if removed_count > 0:
         print(f"  Cleaned up {removed_count} dead hook reference(s)")
 
+    return settings
+
+
+def _normalize_session_start_matcher(settings: dict) -> dict:
+    """Strip 'startup' from SessionStart hook matchers (v2.2.0+).
+
+    v2.2.0 moved session bootstrap to agent-activated skills.
+    The 'startup' trigger is vestigial and causes unnecessary hook
+    execution on new sessions (DEC-054: sessions start clean).
+    """
+    hooks = settings.get("hooks", {})
+    for wrappers in hooks.values():
+        if not isinstance(wrappers, list):
+            continue
+        for wrapper in wrappers:
+            if not isinstance(wrapper, dict):
+                continue
+            # Check nested hooks for session_start.py
+            for hook in wrapper.get("hooks", []):
+                if not isinstance(hook, dict):
+                    continue
+                cmd = hook.get("command", "")
+                if "session_start.py" in cmd:
+                    matcher = wrapper.get("matcher", "")
+                    if "startup" in matcher:
+                        parts = [p for p in matcher.split("|") if p != "startup"]
+                        wrapper["matcher"] = "|".join(parts) if parts else "resume|compact"
     return settings
 
 
@@ -422,6 +449,8 @@ def merge_settings(
     merged = _upgrade_hook_commands(merged)
     # FAIL-001 fix: Remove hook entries whose scripts no longer exist
     merged = _remove_dead_hooks(merged)
+    # FAIL-03 fix: Strip vestigial 'startup' from SessionStart matchers (DEC-054)
+    merged = _normalize_session_start_matcher(merged)
 
     # Backup existing settings (copy, not rename - safer)
     if path.exists():

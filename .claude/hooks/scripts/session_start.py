@@ -680,6 +680,76 @@ def main():
 
             # Check Qdrant health (graceful degradation if down)
             config = get_config()
+
+            if trigger == "resume":
+                # DEC-054: No injection on resume — Claude restores session natively
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                logger.info(
+                    "v2_resume_no_injection",
+                    extra={
+                        "trigger": trigger,
+                        "session_id": session_id,
+                        "project": project_name,
+                        "duration_ms": round(duration_ms, 2),
+                    },
+                )
+
+                # User notification
+                print(
+                    f"🧠 AI Memory V2.2: Resume (no injection) [{duration_ms:.0f}ms]",
+                    file=sys.stderr,
+                )
+
+                # Langfuse trace event for resume path
+                if emit_trace_event is not None:
+                    try:
+                        from uuid import uuid4 as _uuid4
+
+                        _resume_trace_id = _uuid4().hex
+                        _resume_root_span_id = _uuid4().hex
+                        os.environ["LANGFUSE_TRACE_ID"] = _resume_trace_id
+                        os.environ["LANGFUSE_ROOT_SPAN_ID"] = _resume_root_span_id
+                        os.environ["CLAUDE_SESSION_ID"] = session_id
+
+                        emit_trace_event(
+                            event_type="session_bootstrap",
+                            data={
+                                "input": f"Session resume: {project_name}",
+                                "output": "No injection — resume (DEC-054)",
+                                "metadata": {
+                                    "session_type": "resume",
+                                    "result_count": 0,
+                                    "tokens_injected": 0,
+                                    "budget": config.token_budget,
+                                    "summary": "Resume: no injection per DEC-054",
+                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
+                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                },
+                            },
+                            span_id=_resume_root_span_id,
+                            parent_span_id=None,
+                            session_id=session_id,
+                            project_id=project_name,
+                        )
+                    except Exception:
+                        pass
+
+                # Empty context JSON
+                print(
+                    json.dumps(
+                        {
+                            "hookSpecificOutput": {
+                                "hookEventName": "SessionStart",
+                                "additionalContext": "",
+                            }
+                        }
+                    )
+                )
+
+                cleanup_dedup_lock(lock_file_path)
+
+                sys.exit(0)
+
             client = get_qdrant_client(config)
             if not check_qdrant_health(client):
                 log_empty_session(
@@ -729,7 +799,8 @@ def main():
             # V2.0.6 SPEC-012: Progressive Context Injection (AD-6 override of Core Arch V2)
             # clear: No injection - user wants fresh start, delete injection state
             # startup: REMOVED (v2.2.0) — bootstrap moved to aim-parzival-bootstrap skill
-            # resume/compact: Session restore (existing behavior, 4K)
+            # resume: No injection — Claude restores session natively (DEC-054)
+            # compact: Session restore — rich summary only (DEC-055/056)
 
             if trigger == "clear":
                 # User wants fresh start — delete injection state and skip injection
@@ -771,18 +842,18 @@ def main():
 
                 sys.exit(0)
 
-            # On resume or compact: Inject conversation context to restore working memory
-            # SPEC-021: Propagate trace context for resume/compact path
+            # On compact: Inject conversation context to restore working memory (DEC-055/056)
+            # SPEC-021: Propagate trace context for compact path
             from uuid import uuid4 as _uuid4
 
-            _resume_trace_id = _uuid4().hex
-            _resume_root_span_id = _uuid4().hex
-            os.environ["LANGFUSE_TRACE_ID"] = _resume_trace_id
-            os.environ["LANGFUSE_ROOT_SPAN_ID"] = _resume_root_span_id
+            _compact_trace_id = _uuid4().hex
+            _compact_root_span_id = _uuid4().hex
+            os.environ["LANGFUSE_TRACE_ID"] = _compact_trace_id
+            os.environ["LANGFUSE_ROOT_SPAN_ID"] = _compact_root_span_id
             os.environ["CLAUDE_SESSION_ID"] = session_id
 
             logger.info(
-                "v2_context_injection",
+                "v2_compact_context_injection",
                 extra={
                     "trigger": trigger,
                     "session_id": session_id,
@@ -917,118 +988,46 @@ def main():
                     _parzival_constraints_context = ""
 
             else:
-                # NON-PARZIVAL PATH: Keep existing behavior EXACTLY
-                # Retrieve session summaries using shared helper (TECH-DEBT-047 refactor)
-                _retrieval_start = time.perf_counter()
-                session_summaries = retrieve_session_summaries(
-                    client, project_name, limit=20
-                )
-                # Take top 5 most recent
-                session_summaries = session_summaries[:5]
-                # TD-228: Trace event for non-Parzival session summaries retrieval
-                if emit_trace_event:
-                    try:
-                        _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
-                        emit_trace_event(
-                            event_type="memory_retrieval_session_summaries",
-                            data={
-                                "input": f"retrieve_session_summaries(limit=20) for {project_name}",
-                                "output": f"Retrieved {len(session_summaries)} session summaries (from top 5)",
-                                "metadata": {
-                                    "trigger": trigger,
-                                    "collection": COLLECTION_DISCUSSIONS,
-                                    "memory_type": "session",
-                                    "method": "scroll",
-                                    "result_count": len(session_summaries),
-                                    "retrieval_ms": round(_retrieval_ms, 2),
-                                    "parzival_enabled": False,
-                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
-                                },
-                            },
-                            session_id=session_id,
-                            project_id=project_name,
-                        )
-                    except Exception:
-                        pass
+                # NON-PARZIVAL PATH: Rich session summary ONLY (DEC-055)
+                from memory.search import MemorySearch
 
-                # Retrieve other memories (decisions, patterns, conventions)
-                other_memories = []
-                # Track memory counts per collection for metrics (BUG-021 fix)
-                memories_per_collection = {
-                    COLLECTION_DISCUSSIONS: 0,
-                    COLLECTION_CODE_PATTERNS: 0,
-                    COLLECTION_CONVENTIONS: 0,
-                }
+                searcher = MemorySearch(config)
                 try:
-                    from memory.search import MemorySearch
-
-                    # Build a query from the most recent session summary
-                    query = "recent implementation patterns and decisions"
-                    if session_summaries:
-                        first_summary = session_summaries[0]
-                        query = (
-                            first_summary.get("first_user_prompt")
-                            or first_summary.get("content", "")[:200]
-                            or "recent implementation patterns"
-                        )
-
-                    # Search for relevant memories across collections
-                    searcher = MemorySearch(config)
-
-                    # Search decisions from discussions (type=decision)
-                    decisions = searcher.search(
-                        query=query,
+                    _retrieval_start = time.perf_counter()
+                    session_summary_results = searcher.get_recent(
                         collection=COLLECTION_DISCUSSIONS,
                         group_id=project_name,
-                        limit=3,
-                        memory_type="decision",
-                        fast_mode=True,
+                        memory_type=["session"],
+                        limit=1,
                     )
-                    other_memories.extend(decisions)
-                    memories_per_collection[COLLECTION_DISCUSSIONS] = len(decisions)
-
-                    # Search patterns from code-patterns
-                    patterns = searcher.search(
-                        query=query,
-                        collection=COLLECTION_CODE_PATTERNS,
-                        group_id=project_name,
-                        limit=3,
-                        fast_mode=True,
-                    )
-                    other_memories.extend(patterns)
-                    memories_per_collection[COLLECTION_CODE_PATTERNS] = len(patterns)
-
-                    # Search conventions (no group_id filter - shared)
-                    conventions = searcher.search(
-                        query=query,
-                        collection=COLLECTION_CONVENTIONS,
-                        group_id=None,
-                        limit=2,
-                        fast_mode=True,
-                    )
-                    other_memories.extend(conventions)
-                    memories_per_collection[COLLECTION_CONVENTIONS] = len(conventions)
-
-                    searcher.close()
-
-                except Exception as e:
-                    logger.warning(
-                        "other_memories_retrieval_failed",
-                        extra={"session_id": session_id, "error": str(e)},
-                    )
+                    session_summaries = []
+                    for r in session_summary_results:
+                        session_summaries.append({
+                            "content": r.get("content", ""),
+                            "timestamp": r.get("created_at", r.get("timestamp", "")),
+                            "type": r.get("type", "session"),
+                            "first_user_prompt": r.get("first_user_prompt", ""),
+                            "last_user_prompts": r.get("last_user_prompts", []),
+                            "last_agent_responses": r.get("last_agent_responses", []),
+                            "session_metadata": r.get("session_metadata", {}),
+                        })
+                    # TD-228: Trace event for non-Parzival session summaries retrieval
                     if emit_trace_event:
                         try:
+                            _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
                             emit_trace_event(
-                                event_type="context_retrieval",
+                                event_type="memory_retrieval_session_summaries",
                                 data={
-                                    "input": f"Other memories retrieval: {project_name}",
-                                    "output": f"Retrieval failed: {type(e).__name__}: {e!s}",
+                                    "input": f"get_recent(discussions, type=session, limit=1) for {project_name}",
+                                    "output": f"Retrieved {len(session_summaries)} session summaries (DEC-055: compact summary only)",
                                     "metadata": {
                                         "trigger": trigger,
-                                        "error": type(e).__name__,
-                                        "results_considered": 0,
-                                        "results_selected": 0,
+                                        "collection": COLLECTION_DISCUSSIONS,
+                                        "memory_type": "session",
+                                        "method": "get_recent",
+                                        "result_count": len(session_summaries),
+                                        "retrieval_ms": round(_retrieval_ms, 2),
+                                        "parzival_enabled": False,
                                         "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
                                         "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                                     },
@@ -1038,7 +1037,21 @@ def main():
                             )
                         except Exception:
                             pass
-                    other_memories = []
+                except Exception as e:
+                    logger.warning(
+                        "non_parzival_session_summaries_retrieval_failed",
+                        extra={"session_id": session_id, "error": str(e)},
+                    )
+                    session_summaries = []
+                finally:
+                    searcher.close()
+
+                other_memories = []
+                memories_per_collection = {
+                    COLLECTION_DISCUSSIONS: 0,
+                    COLLECTION_CODE_PATTERNS: 0,
+                    COLLECTION_CONVENTIONS: 0,
+                }
 
             # Use priority injection (TECH-DEBT-047)
             conversation_context = inject_with_priority(
@@ -1051,7 +1064,7 @@ def main():
             duration_ms = (time.perf_counter() - start_time) * 1000
             duration_seconds = duration_ms / 1000.0
 
-            # V2.0 resume/compact behavior: Output conversation context only (no general memory search)
+            # V2.2 compact behavior: Output conversation context only (no general memory search)
             if conversation_context:
                 # CR-3.5 HIGH FIX: Validate token budget before injection
                 context_char_count = len(conversation_context)
@@ -1250,7 +1263,7 @@ def main():
                                     "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                                 },
                             },
-                            span_id=_resume_root_span_id,
+                            span_id=_compact_root_span_id,
                             parent_span_id=None,
                             session_id=session_id,
                             project_id=project_name,
