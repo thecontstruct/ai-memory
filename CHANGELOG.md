@@ -5,6 +5,93 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-03-08
+
+Agent-activated architecture (PLAN-011 + PLAN-012): Cross-session memory moves from automatic ambient injection to agent-activated retrieval via skills. Sessions start clean — no Qdrant noise on startup or resume. Parzival V2 deployment with deployable `_ai-memory/` package, PCB step-file workflows, constraint re-injection, and layered bootstrap skill. Installer upgraded with V2 deployment pipeline, V1-to-V2 migration, and stale matcher cleanup.
+
+### Added
+
+#### Parzival V2 Deployment Architecture (PLAN-011)
+- **Deployable `_ai-memory/` package**: Self-contained Parzival agent with POV workflows, constraints, config, and `_memory/` user data directory — deployed to both install dir and project dir
+- **PCB step-file workflows**: Multi-step session start, closeout, and team orchestration workflows using file-based step sequencing
+- **9 command shims**: `/pov:parzival`, `/pov:parzival-start`, `/pov:parzival-closeout`, `/pov:parzival-status`, `/pov:parzival-handoff`, `/pov:parzival-blocker`, `/pov:parzival-decision`, `/pov:parzival-team`, `/pov:parzival-verify`
+- **Agent-activated bootstrap**: `/aim-parzival-bootstrap` skill with 4-layer retrieval (L1: last handoff, L2: recent decisions, L3: insights, L4: GitHub enrichment) — replaces ambient injection
+- **Constraint re-injection**: `/aim-parzival-constraints` skill loads behavioral constraints (GC-01 through GC-13) on activation and post-compact
+- **GC-13 constraint**: "ALWAYS Research Best Practices Before Dispatching for New Tech or After Failed Fix" — 5 mandatory triggers integrated into 4 workflow steps
+- **`update-pov.sh`**: Script to update Parzival agent files from upstream source
+
+#### Session Injection Fix (PLAN-012)
+- **Resume handler (DEC-054)**: `session_start.py` now outputs NOTHING on resume — Claude Code restores sessions natively. No Qdrant connection made.
+- **Non-Parzival compact (DEC-055)**: Outputs rich session summary ONLY (`get_recent(type=session, limit=1)`) — no decisions, patterns, or conventions injected
+- **Parzival compact (DEC-056)**: Outputs session summaries(3) + decisions(5) + filesystem constraints — unchanged from previous behavior
+
+#### Installer V2 Pipeline (PLAN-011a)
+- **7 new installer functions**: `deploy_parzival_v2()`, `deploy_ai_memory_skills()`, `deploy_ai_memory_agents()`, `deploy_parzival_commands()`, `sync_parzival_config_yaml()`, `create_project_symlinks()`, `cleanup_parzival_v1()`
+- **V1-to-V2 upgrade**: Automatic backup and removal of V1 Parzival directories (`agents/parzival/`, `commands/parzival/`)
+- **V1 skill cleanup**: 13 old skill names (`memory-status`, `search-memory`, etc.) automatically removed on install, replaced by `aim-*` prefixed equivalents
+- **`_memory/` preservation**: User-created memory files backed up and restored during `_ai-memory/` package updates (PID-suffixed for race safety)
+
+### Changed
+
+#### Session Start Behavior (Breaking)
+- **`startup` trigger removed**: SessionStart hook no longer fires on new sessions. Sessions start clean with zero Qdrant queries.
+- **Matcher narrowed**: `generate_settings.py` now generates `"resume|compact"` (was `"startup|resume|compact"`)
+- **`merge_settings.py` matcher normalization**: New `_normalize_session_start_matcher()` strips vestigial `startup` from existing matchers during upgrade. Ensures all installations get the correct v2.2.0 behavior.
+- **Non-Parzival compact simplified**: Replaced 20-session + decisions + patterns + conventions retrieval (~4000 tokens) with single rich session summary (~500 tokens)
+
+#### Parzival Agent
+- **Bootstrap moved to skill**: Cross-session memory loaded via `/aim-parzival-bootstrap` (agent-activated), not automatically injected
+- **Constraints loaded via skill**: `/aim-parzival-constraints` replaces inline constraint loading
+- **Handoff/insight Qdrant save**: `/parzival-save-handoff` and `/parzival-save-insight` skills for cross-session persistence
+
+### Fixed
+- **BUG-206**: Session start injecting ~4000 tokens of Qdrant noise on every resume/compact event
+- **BUG-207**: `generate_settings.py` verified — produces correct `"resume|compact"` matcher (no code change needed)
+- **FAIL-03**: `merge_settings.py` preserving stale `startup` matcher on upgrade from v2.1.0
+- **FAIL-07**: 13 stale V1 skill directories not cleaned during install (duplicate skills in menu)
+
+### Upgrade Instructions
+
+#### Existing Installations
+
+**Important**: v2.2.0 changes the session start behavior. After upgrading, sessions start clean — no automatic Qdrant injection on new sessions or resume. Cross-session memory is now accessed via skills (`/aim-parzival-bootstrap`, `/aim-search`).
+
+1. Update code and reinstall:
+   ```bash
+   cd /path/to/your/ai-memory-clone
+   git pull origin main
+   ./scripts/install.sh /path/to/your-project
+   # Select Option 1 when prompted (updates hooks and code only)
+   ```
+
+2. **Verify matcher was updated**: After install, check your project's `.claude/settings.json`:
+   ```bash
+   grep -A2 'session_start.py' /path/to/your-project/.claude/settings.json
+   ```
+   The `"matcher"` field should be `"resume|compact"` (NOT `"startup|resume|compact"`). The installer handles this automatically via `merge_settings.py`, but verify on first upgrade.
+
+3. **V1 skill cleanup is automatic**: The installer removes 13 old V1-named skill directories. You should see 17 skills (not 30) in `/path/to/your-project/.claude/skills/` after upgrade.
+
+4. **No migration scripts required**: v2.2.0 does not change Qdrant collections or data format.
+
+5. **No container rebuilds required**: All changes are in hook scripts and installer code (volume-mounted, not baked into Docker images).
+
+#### Parzival Users
+
+If you use Parzival oversight agent:
+
+1. Run the installer as above (deploys `_ai-memory/` package automatically)
+2. On first session, activate with `/pov:parzival` (new command format)
+3. Cross-session memory is now loaded via `/aim-parzival-bootstrap` (called automatically by the session start workflow)
+4. Constraints are loaded via `/aim-parzival-constraints` (called at activation and after compact events)
+5. Old V1 commands (`/parzival-start`, etc.) are replaced by `/pov:parzival-start` — the installer removes V1 directories automatically
+
+#### New Installations
+
+No special action needed — `install.sh` deploys the complete v2.2.0 architecture including Parzival V2 package, correct matchers, and all skills.
+
+---
+
 ## [2.1.0] - 2026-03-03
 
 Observability and code quality sprint: full Langfuse V3 SDK migration across all services, agent identity metadata for per-agent trace filtering, and graceful shutdown handling for Docker workers.

@@ -254,7 +254,7 @@ def test_dual_collection_search_logic_runs():
 
 
 def test_session_start_dual_collection_logic():
-    """Verify session_start.py implements dual-collection search correctly."""
+    """Verify session_start.py implements v2.2.0 injection architecture correctly."""
     # This test verifies the actual implementation in session_start.py
     # by importing and testing the main logic flow
 
@@ -263,21 +263,23 @@ def test_session_start_dual_collection_logic():
     )
 
     # We'll verify the code structure exists (integration tests will verify behavior)
-    # Verify dual-collection search logic exists in main()
+    # Verify injection logic exists in main()
     import inspect
 
     import session_start
 
     source = inspect.getsource(session_start.main)
 
-    # Check for implementations search using collection constants (V2.0 refactor)
-    # Production uses COLLECTION_CODE_PATTERNS constant instead of literal string
+    # v2.2.0: Resume exits early with no injection (DEC-054)
+    assert 'trigger == "resume"' in source
+
+    # v2.2.0: Non-Parzival compact uses get_recent for session summaries (DEC-055)
+    assert "get_recent" in source
+    assert 'memory_type=["session"]' in source
+
+    # Parzival path still uses COLLECTION_DISCUSSIONS and COLLECTION_CODE_PATTERNS
+    assert "COLLECTION_DISCUSSIONS" in source
     assert "COLLECTION_CODE_PATTERNS" in source
-    assert "group_id=project_name" in source
 
-    # Check for conventions search without group_id using constant
-    assert "COLLECTION_CONVENTIONS" in source
-    assert "group_id=None" in source
-
-    # Check for result combination - V2.0 uses memories_per_collection dict
-    assert "memories_per_collection" in source or "other_memories" in source
+    # Check for result combination - both paths define memories_per_collection
+    assert "memories_per_collection" in source
