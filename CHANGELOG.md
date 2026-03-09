@@ -35,37 +35,45 @@ Triple Fusion Hybrid Search (PLAN-013): Dense vectors augmented with BM25 sparse
 - **Missing `github` collection in decay**: `resolve_half_life()` now includes `github` collection with configurable `decay_half_life_github` (default: 14 days)
 - **EmbeddingClient resource leak**: `pre_compact_save.py` now uses `with` context manager for EmbeddingClient
 - **`COLBERT_ENABLED` env var**: Was missing from docker-compose embedding service environment
+- **Installer Option 1 Docker sync**: Add-project mode now copies Docker files (Dockerfiles, main.py, requirements.txt) and merges new `.env.example` keys — previously only full reinstall (Option 2) updated Docker files
 
 ### Upgrade Instructions
 
-1. Update code and reinstall:
+1. **Update code and reinstall** (from your ai-memory clone):
    ```bash
    cd /path/to/your/ai-memory-clone
    git pull origin main
    ./scripts/install.sh /path/to/your-project
-   # Select Option 1 (updates hooks and code only)
+   # Select Option 1 (Add project to existing installation)
+   # This updates hooks, scripts, skills, AND Docker files
    ```
 
-2. **Rebuild embedding container** (required — new BM25 model):
+2. **Enable hybrid search** (from installed location):
    ```bash
-   cd ~/.ai-memory/docker
-   unset QDRANT_API_KEY  # prevent env override
-   docker compose build --no-cache embedding
-   docker compose up -d embedding
+   cd ~/.ai-memory
+   ./scripts/enable-hybrid-search.sh
    ```
-
-3. **Enable hybrid search** (optional):
+   Or equivalently:
    ```bash
-   # Add to ~/.ai-memory/docker/.env:
-   HYBRID_SEARCH_ENABLED=true
-   COLBERT_RERANKING_ENABLED=false  # or true for ColBERT
-   COLBERT_ENABLED=false            # or true to load ColBERT model
+   ~/.ai-memory/scripts/stack.sh enable-hybrid
+   ```
+   This handles everything automatically:
+   - Pre-flight checks (Docker, Qdrant, embedding health)
+   - Embedding container rebuild (adds BM25 sparse model)
+   - Configuration update (`HYBRID_SEARCH_ENABLED=true`)
+   - Data migration (adds sparse vectors to existing Qdrant points)
+   - Verification (confirms hybrid search is operational)
 
-   # Migrate existing data:
-   python ~/.ai-memory/scripts/migrate_v221_hybrid_vectors.py
+3. **Optional — ColBERT reranking**:
+   ```bash
+   # Add to ~/.ai-memory/docker/.env BEFORE running enable-hybrid-search.sh:
+   COLBERT_ENABLED=true
+   COLBERT_RERANKING_ENABLED=true
    ```
 
 4. **No Qdrant schema changes required**: Sparse vectors are added alongside existing dense vectors. Plain dense search continues to work without migration.
+
+> **Note**: The installer Option 1 now syncs Docker files (Dockerfiles, main.py, requirements.txt, docker-compose.yml) alongside hooks, scripts, and skills. Previous versions required Option 2 (full reinstall) for Docker changes.
 
 ---
 

@@ -4,12 +4,29 @@
 v2.2.1 migration script. Idempotent — safe to run multiple times.
 Tracks progress in _migration_state.json for resumability.
 
-Steps per collection:
-1. Call update_collection() to add sparse_vectors_config (BM25/IDF)
-2. Scroll all points in batches
-3. For each point, extract content from payload
-4. Call embedding service /embed/sparse to get sparse vector
-5. Upsert point with existing dense vector + new BM25 sparse vector
+Strategy (per collection):
+  Qdrant does not support adding new sparse vector configs to existing
+  collections via update_collection (GitHub #4465). The fix is to recreate
+  each collection with the new schema and scroll-copy all data.
+
+  Phase 1 — Schema migration (scroll-migrate + recreate):
+    1. Read existing collection config + payload indices
+    2. Create temp collection with same config + BM25 sparse vectors
+    3. Copy all payload indices to temp
+    4. Scroll all points from old → temp
+    5. Verify point counts match
+    6. Delete old collection
+    7. Create final collection with sparse config (original name)
+    8. Copy all payload indices to final
+    9. Scroll all points from temp → final
+    10. Verify point counts match
+    11. Delete temp
+
+  Phase 2 — BM25 backfill (generate sparse embeddings):
+    1. Scroll all points in final collection
+    2. Extract content from payload
+    3. Call /embed/sparse to get BM25 sparse vectors
+    4. Upsert sparse vectors via update_vectors
 
 Usage:
     python scripts/migrate_v221_hybrid_vectors.py
@@ -32,11 +49,10 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from qdrant_client.models import (
-    NamedSparseVector,
+    Modifier,
     PointVectors,
     SparseVector,
     SparseVectorParams,
-    Modifier,
 )
 
 from memory.config import (
@@ -87,6 +103,244 @@ def save_state(state: dict) -> None:
         print(f"  {YELLOW}!{RESET} Could not save state: {e}")
 
 
+def collection_has_sparse(client, collection_name: str) -> bool:
+    """Check if a collection already has BM25 sparse vector config."""
+    try:
+        info = client.get_collection(collection_name)
+        sparse = getattr(info.config.params, "sparse_vectors", None)
+        return bool(sparse and "bm25" in (sparse or {}))
+    except Exception:
+        return False
+
+
+def scroll_copy(client, src: str, dst: str, batch_size: int) -> int:
+    """Scroll all points from src collection and upload to dst.
+
+    Returns:
+        Number of points copied.
+    """
+    copied = 0
+    offset = None
+    while True:
+        scroll_kwargs = {
+            "collection_name": src,
+            "limit": batch_size,
+            "with_payload": True,
+            "with_vectors": True,
+        }
+        if offset is not None:
+            scroll_kwargs["offset"] = offset
+
+        points, next_offset = client.scroll(**scroll_kwargs)
+
+        if not points:
+            break
+
+        # upload_points accepts Record objects from scroll directly
+        client.upload_points(collection_name=dst, points=points, wait=True)
+        copied += len(points)
+
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    return copied
+
+
+def recreate_payload_indices(client, dst: str, payload_schema: dict) -> None:
+    """Recreate all payload indices from source schema on destination collection."""
+    for field_name, field_info in payload_schema.items():
+        try:
+            # Use params if available (carries is_tenant, tokenizer, etc.),
+            # otherwise fall back to basic data_type
+            schema = (
+                field_info.params
+                if field_info.params is not None
+                else field_info.data_type
+            )
+            client.create_payload_index(
+                collection_name=dst,
+                field_name=field_name,
+                field_schema=schema,
+            )
+        except Exception as e:
+            print(f"    {YELLOW}!{RESET} Index '{field_name}' on '{dst}': {e}")
+
+
+def create_collection_with_sparse(
+    client, name: str, src_config, sparse_config: dict
+) -> None:
+    """Create a collection with the source config + sparse vectors added."""
+    from qdrant_client.models import (
+        HnswConfigDiff,
+        ScalarQuantization,
+        ScalarQuantizationConfig,
+        ScalarType,
+    )
+
+    # Reconstruct HNSW config from source
+    src_hnsw = src_config.hnsw_config
+    hnsw = HnswConfigDiff(
+        m=src_hnsw.m,
+        ef_construct=src_hnsw.ef_construct,
+        full_scan_threshold=src_hnsw.full_scan_threshold,
+        on_disk=getattr(src_hnsw, "on_disk", True),
+    )
+
+    # Reconstruct quantization config from source
+    quant = None
+    src_quant = src_config.quantization_config
+    if src_quant is not None:
+        scalar = getattr(src_quant, "scalar", None)
+        if scalar is not None:
+            quant = ScalarQuantization(
+                scalar=ScalarQuantizationConfig(
+                    type=(
+                        ScalarType(scalar.type.value)
+                        if hasattr(scalar.type, "value")
+                        else scalar.type
+                    ),
+                    quantile=scalar.quantile,
+                    always_ram=scalar.always_ram,
+                )
+            )
+
+    client.create_collection(
+        collection_name=name,
+        vectors_config=src_config.params.vectors,
+        sparse_vectors_config=sparse_config,
+        hnsw_config=hnsw,
+        quantization_config=quant,
+        shard_number=src_config.params.shard_number,
+        on_disk_payload=src_config.params.on_disk_payload,
+    )
+
+
+def ensure_sparse_config(
+    client, collection_name: str, batch_size: int, dry_run: bool
+) -> bool:
+    """Ensure a collection has BM25 sparse vector config.
+
+    If the collection already has sparse config, returns True immediately.
+    Otherwise, recreates the collection with sparse config using scroll-migrate.
+
+    Qdrant does not support adding new sparse vector configs to existing
+    collections via update_collection (GitHub #4465). The workaround is to
+    create a new collection with the desired schema, copy all data, then
+    swap in the new collection.
+
+    Returns:
+        True if collection now has sparse config, False on error.
+    """
+    if not client.collection_exists(collection_name):
+        print(
+            f"  {YELLOW}!{RESET} Collection '{collection_name}' does not exist — skipping"
+        )
+        return False
+
+    # Already has sparse config — nothing to do
+    if collection_has_sparse(client, collection_name):
+        print(
+            f"  {GREEN}✓{RESET} Collection '{collection_name}' already has BM25 config"
+        )
+        return True
+
+    if dry_run:
+        print(
+            f"  {GRAY}[DRY RUN] Would recreate '{collection_name}' with BM25 sparse config{RESET}"
+        )
+        return True
+
+    tmp_name = f"{collection_name}_migration_tmp"
+    sparse_config = {"bm25": SparseVectorParams(modifier=Modifier.IDF)}
+
+    # Get source collection info
+    info = client.get_collection(collection_name)
+    src_config = info.config
+    src_payload_schema = info.payload_schema
+    src_count = info.points_count or 0
+
+    print(
+        f"  Recreating '{collection_name}' with sparse config ({src_count} points)..."
+    )
+
+    # Clean up any leftover temp collection from a previous failed run
+    if client.collection_exists(tmp_name):
+        print(f"  {YELLOW}!{RESET} Cleaning up leftover temp collection '{tmp_name}'")
+        client.delete_collection(tmp_name)
+
+    try:
+        # Step 1: Create temp collection with same config + sparse vectors
+        print(f"    1/6 Creating temp collection '{tmp_name}'...")
+        create_collection_with_sparse(client, tmp_name, src_config, sparse_config)
+        recreate_payload_indices(client, tmp_name, src_payload_schema)
+
+        # Step 2: Scroll all data from source → temp
+        print(f"    2/6 Copying {src_count} points to temp...")
+        copied = scroll_copy(client, collection_name, tmp_name, batch_size)
+        print(f"         Copied {copied} points")
+
+        # Step 3: Verify counts match
+        tmp_count = client.count(tmp_name).count
+        if tmp_count != src_count:
+            raise RuntimeError(
+                f"Count mismatch after copy: source={src_count}, temp={tmp_count}"
+            )
+        print(f"    3/6 Count verified: {tmp_count} points")
+
+        # Step 4: Delete original collection
+        print(f"    4/6 Deleting original '{collection_name}'...")
+        client.delete_collection(collection_name)
+
+        # Step 5: Create final collection with original name + sparse config
+        print(f"    5/6 Creating final '{collection_name}' with sparse config...")
+        create_collection_with_sparse(
+            client, collection_name, src_config, sparse_config
+        )
+        recreate_payload_indices(client, collection_name, src_payload_schema)
+
+        # Step 6: Scroll all data from temp → final
+        print(f"    6/6 Copying {tmp_count} points to final...")
+        scroll_copy(client, tmp_name, collection_name, batch_size)
+
+        # Verify final counts
+        final_count = client.count(collection_name).count
+        if final_count != src_count:
+            raise RuntimeError(
+                f"Count mismatch in final collection: expected={src_count}, got={final_count}"
+            )
+        print(f"         Verified: {final_count} points")
+
+        # Clean up temp
+        client.delete_collection(tmp_name)
+
+        print(
+            f"  {GREEN}✓{RESET} '{collection_name}' recreated with BM25 sparse config ({final_count} points)"
+        )
+        return True
+
+    except Exception as e:
+        print(f"  {RED}x Schema migration failed for '{collection_name}': {e}{RESET}")
+
+        # Safety: if original still exists, leave it. If only temp exists, warn user.
+        if not client.collection_exists(collection_name) and client.collection_exists(
+            tmp_name
+        ):
+            print(
+                f"  {RED}  IMPORTANT: Original '{collection_name}' was deleted.{RESET}"
+            )
+            print(
+                f"  {RED}  Data is preserved in '{tmp_name}'. Manual recovery needed:{RESET}"
+            )
+            print(
+                f"  {RED}    1. Create '{collection_name}' with setup-collections.py --force{RESET}"
+            )
+            print(f"  {RED}    2. Re-run this migration script{RESET}")
+            print(f"  {RED}  Or rename '{tmp_name}' manually in Qdrant.{RESET}")
+
+        return False
+
+
 def get_sparse_embedding(embedding_url: str, text: str) -> dict | None:
     """Call the embedding service /embed/sparse endpoint.
 
@@ -115,45 +369,7 @@ def get_sparse_embedding(embedding_url: str, text: str) -> dict | None:
         return None
 
 
-def add_sparse_config_to_collection(client, collection_name: str, dry_run: bool) -> bool:
-    """Add BM25 sparse vector config to an existing collection.
-
-    Returns:
-        True if config was added or already present, False on error.
-    """
-    if dry_run:
-        print(f"  {GRAY}[DRY RUN] Would add BM25 sparse config to '{collection_name}'{RESET}")
-        return True
-
-    try:
-        # Check if collection exists
-        if not client.collection_exists(collection_name):
-            print(f"  {YELLOW}!{RESET} Collection '{collection_name}' does not exist — skipping")
-            return False
-
-        # Check if sparse vectors already configured
-        collection_info = client.get_collection(collection_name)
-        existing_sparse = getattr(collection_info.config.params, "sparse_vectors", None)
-        if existing_sparse and "bm25" in (existing_sparse or {}):
-            print(f"  {YELLOW}!{RESET} Collection '{collection_name}' already has BM25 config — skipping")
-            return True
-
-        # Add sparse vector config
-        client.update_collection(
-            collection_name=collection_name,
-            sparse_vectors_config={
-                "bm25": SparseVectorParams(modifier=Modifier.IDF),
-            },
-        )
-        print(f"  {GREEN}+{RESET} Added BM25 sparse config to '{collection_name}'")
-        return True
-
-    except Exception as e:
-        print(f"  {RED}x Failed to add sparse config to '{collection_name}': {e}{RESET}")
-        return False
-
-
-def migrate_collection(
+def backfill_sparse_vectors(
     client,
     collection_name: str,
     embedding_url: str,
@@ -161,7 +377,11 @@ def migrate_collection(
     dry_run: bool,
     state: dict,
 ) -> dict:
-    """Migrate all points in a collection to include BM25 sparse vectors.
+    """Generate BM25 sparse vectors for all existing points in a collection.
+
+    Phase 2 of migration: once the collection has sparse config (Phase 1),
+    this function scrolls all points and adds BM25 sparse vectors via
+    update_vectors.
 
     Returns:
         Stats dict: total, processed, skipped, errors.
@@ -177,13 +397,15 @@ def migrate_collection(
     stats["total"] = collection_info.points_count or 0
 
     if stats["total"] == 0:
-        print(f"  {YELLOW}!{RESET} Collection '{collection_name}' is empty — nothing to migrate")
+        print(
+            f"  {YELLOW}!{RESET} Collection '{collection_name}' is empty — nothing to backfill"
+        )
         return stats
 
-    print(f"  Migrating {stats['total']} points in '{collection_name}'...")
+    print(f"  Backfilling {stats['total']} points in '{collection_name}'...")
 
     # Track which points we've already processed (resumability)
-    col_state_key = f"migrated_{collection_name}"
+    col_state_key = f"backfill_{collection_name}"
     processed_ids = set(state.get(col_state_key, []))
 
     offset = None
@@ -217,6 +439,12 @@ def migrate_collection(
             # Skip already-processed points (resumability)
             if point_id_str in processed_ids:
                 stats["skipped"] += 1
+                continue
+
+            # Check if point already has bm25 sparse vector
+            if isinstance(point.vector, dict) and "bm25" in point.vector:
+                stats["skipped"] += 1
+                processed_ids.add(point_id_str)
                 continue
 
             # Extract content from payload
@@ -344,19 +572,41 @@ def main():
         print("  PLAN-013 Migration: Hybrid Search Sparse Vectors (v2.2.1)")
     print(f"{'=' * 60}\n")
 
+    # Load docker/.env into environment so get_config() picks up Qdrant credentials.
+    # get_config() uses pydantic-settings which reads .env from CWD, but the migration
+    # script may run from any directory. We explicitly source docker/.env here.
+    install_dir = Path(
+        os.environ.get("AI_MEMORY_INSTALL_DIR", os.path.expanduser("~/.ai-memory"))
+    )
+    docker_env = install_dir / "docker" / ".env"
+    if docker_env.exists():
+        for line in docker_env.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                # Only set if not already in shell env (shell env takes precedence)
+                if key not in os.environ:
+                    os.environ[key] = val
+        print(f"  Loaded env from: {docker_env}")
+    else:
+        print(f"  {YELLOW}WARNING: docker/.env not found at {docker_env}{RESET}")
+
     # Check for shell env override (BUG-202 pattern)
     shell_key = os.environ.get("QDRANT_API_KEY")
-    if shell_key:
-        # Read from .env file
-        env_file = Path(os.environ.get("AI_MEMORY_INSTALL_DIR", os.path.expanduser("~/.ai-memory"))) / "docker" / ".env"
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.startswith("QDRANT_API_KEY="):
-                    file_key = line.split("=", 1)[1].strip().strip('"').strip("'")
-                    if shell_key != file_key:
-                        print(f"  {YELLOW}WARNING: Shell QDRANT_API_KEY differs from docker/.env value{RESET}")
-                        print(f"  {YELLOW}Run: unset QDRANT_API_KEY{RESET}")
-                    break
+    if shell_key and docker_env.exists():
+        for line in docker_env.read_text().splitlines():
+            if line.strip().startswith("QDRANT_API_KEY="):
+                file_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if shell_key != file_key:
+                    print(
+                        f"  {YELLOW}WARNING: Shell QDRANT_API_KEY differs from docker/.env value{RESET}"
+                    )
+                    print(f"  {YELLOW}Run: unset QDRANT_API_KEY{RESET}")
+                break
 
     # Connect to Qdrant
     try:
@@ -379,10 +629,16 @@ def main():
         try:
             resp = requests.get(f"{embedding_url}/health", timeout=5)
             if resp.status_code != 200:
-                print(f"{YELLOW}WARNING: Embedding service health check returned {resp.status_code}{RESET}")
+                print(
+                    f"{YELLOW}WARNING: Embedding service health check returned {resp.status_code}{RESET}"
+                )
         except Exception as e:
-            print(f"{RED}x Cannot reach embedding service at {embedding_url}: {e}{RESET}")
-            print("  Ensure the embedding service is running with sparse embedding support.")
+            print(
+                f"{RED}x Cannot reach embedding service at {embedding_url}: {e}{RESET}"
+            )
+            print(
+                "  Ensure the embedding service is running with sparse embedding support."
+            )
             sys.exit(1)
 
     # Determine which collections to migrate
@@ -392,20 +648,24 @@ def main():
     state = load_state()
 
     all_stats = {}
+    schema_failures = []
 
     for collection_name in collections:
         print(f"--- Collection: {collection_name} ---")
 
-        # Step 1: Add sparse config to collection schema
-        print(f"  Step 1: Add BM25 sparse vector config")
-        ok = add_sparse_config_to_collection(client, collection_name, args.dry_run)
+        # Phase 1: Ensure collection has sparse vector config
+        print("  Phase 1: Schema migration (add BM25 sparse config)")
+        ok = ensure_sparse_config(
+            client, collection_name, args.batch_size, args.dry_run
+        )
         if not ok:
-            print(f"  {YELLOW}!{RESET} Skipping migration for '{collection_name}'")
+            print(f"  {YELLOW}!{RESET} Skipping Phase 2 for '{collection_name}'")
+            schema_failures.append(collection_name)
             continue
 
-        # Step 2: Migrate existing points
-        print(f"  Step 2: Generate sparse vectors for existing points")
-        stats = migrate_collection(
+        # Phase 2: Backfill BM25 sparse vectors for existing points
+        print("  Phase 2: BM25 sparse vector backfill")
+        stats = backfill_sparse_vectors(
             client=client,
             collection_name=collection_name,
             embedding_url=embedding_url,
@@ -431,6 +691,12 @@ def main():
         print(f"  {GREEN}PLAN-013 sparse vector migration complete{RESET}")
     print()
 
+    if schema_failures:
+        print(
+            f"  {RED}Schema migration failed for: {', '.join(schema_failures)}{RESET}"
+        )
+        print()
+
     for col, stats in all_stats.items():
         print(
             f"  {col:20s}: total={stats['total']:>6d}  "
@@ -444,8 +710,13 @@ def main():
 
     # Exit with error if any collection had errors
     total_errors = sum(s.get("errors", 0) for s in all_stats.values())
-    if total_errors > 0:
-        print(f"{YELLOW}WARNING: {total_errors} total errors across collections{RESET}")
+    if total_errors > 0 or schema_failures:
+        errors_msg = f"{total_errors} backfill errors" if total_errors else ""
+        schema_msg = (
+            f"{len(schema_failures)} schema failures" if schema_failures else ""
+        )
+        combined = " + ".join(filter(None, [errors_msg, schema_msg]))
+        print(f"{YELLOW}WARNING: {combined}{RESET}")
         sys.exit(1)
 
 
