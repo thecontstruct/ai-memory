@@ -483,6 +483,7 @@ class ClassificationWorker:
                         trace_id=task.trace_id,
                         session_id=task.session_id or "unknown",
                         project_id=task.group_id,
+                        tags=["background"],
                     )
                 except Exception:
                     pass
@@ -535,6 +536,7 @@ class ClassificationWorker:
                         trace_id=task.trace_id,
                         session_id=task.session_id or "unknown",
                         project_id=task.group_id,
+                        tags=["background"],
                     )
                 except Exception:
                     pass
@@ -572,6 +574,7 @@ class ClassificationWorker:
                     trace_id=task.trace_id,
                     session_id=task.session_id or "unknown",
                     project_id=task.group_id,
+                    tags=["background"],
                 )
             except Exception:
                 pass

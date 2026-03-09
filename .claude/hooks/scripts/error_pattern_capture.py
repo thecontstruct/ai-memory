@@ -488,6 +488,7 @@ def main() -> int:
                         project_id=(
                             detect_project_func(cwd) if detect_project_func else None
                         ),
+                        tags=["capture", "code-patterns"],
                         start_time=capture_start,
                         end_time=datetime.now(tz=timezone.utc),
                     )

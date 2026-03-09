@@ -205,6 +205,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -256,6 +257,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                             trace_id=trace_id,
                             session_id=session_id,
                             project_id=group_id,
+                            tags=["capture", collection_name],
                         )
                     except Exception:
                         pass
@@ -319,6 +321,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -353,6 +356,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                         trace_id=trace_id,
                         session_id=session_id,
                         project_id=group_id,
+                        tags=["capture", collection_name],
                     )
                 except Exception:
                     pass
@@ -418,6 +422,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                                     trace_id=trace_id,
                                     session_id=session_id,
                                     project_id=group_id,
+                                    tags=["capture", collection_name],
                                 )
                             except Exception:
                                 pass
@@ -441,6 +446,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                                     trace_id=trace_id,
                                     session_id=session_id,
                                     project_id=group_id,
+                                    tags=["capture", collection_name],
                                 )
                             except Exception:
                                 pass
@@ -488,6 +494,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -537,6 +544,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -668,6 +676,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -697,6 +706,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -766,6 +776,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass

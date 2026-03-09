@@ -382,6 +382,7 @@ def retrieve_bootstrap_context(
                 session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
                 start_time=_trace_start,
                 end_time=datetime.now(tz=timezone.utc),
+                tags=["injection"],
             )
         except Exception:
             pass
@@ -676,6 +677,7 @@ def select_results_greedy(
                 session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
                 start_time=_trace_start,
                 end_time=datetime.now(tz=timezone.utc),
+                tags=["injection"],
             )
         except Exception:
             pass
@@ -739,6 +741,7 @@ def format_injection_output(
                 session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
                 start_time=_trace_start,
                 end_time=datetime.now(tz=timezone.utc),
+                tags=["injection"],
             )
 
     return formatted

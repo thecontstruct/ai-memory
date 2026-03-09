@@ -651,6 +651,7 @@ class MemorySearch:
                         "metadata": {"path": _search_mode, "collection": collection},
                     },
                     session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
+                    tags=["search", collection],
                 )
             except Exception:
                 pass
@@ -697,6 +698,7 @@ class MemorySearch:
                     project_id=group_id,
                     start_time=_trace_start,
                     end_time=_trace_end,
+                    tags=["search", collection],
                 )
             except Exception:
                 pass
@@ -1205,6 +1207,7 @@ class MemorySearch:
                     project_id=effective_group_id,
                     start_time=_trace_start,
                     end_time=_trace_end,
+                    tags=["search"],
                 )
             except Exception:
                 pass
@@ -1334,6 +1337,7 @@ class MemorySearch:
                         project_id=group_id,
                         start_time=_trace_start,
                         end_time=_trace_end,
+                        tags=["search"],
                     )
                 except Exception:
                     pass
@@ -1424,6 +1428,7 @@ class MemorySearch:
                     project_id=group_id,
                     start_time=_trace_start,
                     end_time=_trace_end,
+                    tags=["search"],
                 )
             except Exception:
                 pass

@@ -234,6 +234,7 @@ class EmbeddingClient:
                         },
                         session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
                         as_type="generation",
+                        tags=["embedding"],
                     )
                 except Exception:
                     pass
@@ -377,6 +378,7 @@ class EmbeddingClient:
                         },
                         session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
                         as_type="generation",
+                        tags=["embedding"],
                     )
                 except Exception:
                     pass
@@ -444,6 +446,7 @@ class EmbeddingClient:
                         },
                         session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
                         as_type="generation",
+                        tags=["embedding"],
                     )
                 except Exception:
                     pass

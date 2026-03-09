@@ -222,6 +222,7 @@ class JiraSyncEngine:
                         },
                         session_id="jira_sync",
                         start_time=trace_start_time,
+                        tags=["jira"],
                     )
 
             # Fetch issues with pagination
@@ -295,6 +296,7 @@ class JiraSyncEngine:
                         session_id="jira_sync",
                         start_time=trace_start_time,
                         end_time=datetime.now(timezone.utc),
+                        tags=["jira"],
                     )
 
             return SyncResult(
@@ -333,6 +335,7 @@ class JiraSyncEngine:
                         session_id="jira_sync",
                         start_time=start_time,
                         end_time=datetime.now(timezone.utc),
+                        tags=["jira"],
                     )
             return SyncResult(errors=[str(e)], duration_seconds=duration)
 

@@ -242,6 +242,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -264,6 +265,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -320,6 +322,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                                 trace_id=trace_id,
                                 session_id=session_id,
                                 project_id=group_id,
+                                tags=["capture", "code-patterns"],
                             )
                         except Exception:
                             pass
@@ -339,6 +342,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                                 trace_id=trace_id,
                                 session_id=session_id,
                                 project_id=group_id,
+                                tags=["capture", "code-patterns"],
                             )
                         except Exception:
                             pass
@@ -403,6 +407,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -483,6 +488,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -561,6 +567,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -597,6 +604,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -620,6 +628,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass

@@ -432,6 +432,7 @@ def run_freshness_scan(
                 },
                 start_time=_trace_start,
                 session_id="freshness_scan",
+                tags=["decay"],
             )
 
     # Step 2: Scroll code-patterns and compare
@@ -586,6 +587,7 @@ def run_freshness_scan(
                 start_time=_trace_start,
                 end_time=datetime.now(timezone.utc),
                 session_id="freshness_scan",
+                tags=["decay"],
             )
 
     # Step 6: Push Prometheus metrics (fire-and-forget)

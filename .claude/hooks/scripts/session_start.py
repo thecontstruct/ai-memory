@@ -643,6 +643,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
+                                    tags=["retrieval"],
                                 )
                             except Exception:
                                 pass
@@ -730,6 +731,7 @@ def main():
                             parent_span_id=None,
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval"],
                         )
                     except Exception:
                         pass
@@ -776,6 +778,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval"],
                         )
                     except Exception:
                         pass
@@ -914,6 +917,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
+                                    tags=["retrieval", "injection"],
                                 )
                             except Exception:
                                 pass
@@ -964,6 +968,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
+                                    tags=["retrieval", "injection"],
                                 )
                             except Exception:
                                 pass
@@ -1034,6 +1039,7 @@ def main():
                                 },
                                 session_id=session_id,
                                 project_id=project_name,
+                                tags=["retrieval", "injection"],
                             )
                         except Exception:
                             pass
@@ -1239,6 +1245,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval", "injection"],
                         )
                     except Exception:
                         pass
@@ -1267,6 +1274,7 @@ def main():
                             parent_span_id=None,
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval", "injection"],
                         )
                     except Exception:
                         logger.debug("trace_event_failed_session_restore")
@@ -1324,6 +1332,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval"],
                         )
                     except Exception:
                         pass
@@ -1375,6 +1384,7 @@ def main():
                         },
                         session_id=_session,
                         project_id=_project,
+                        tags=["retrieval"],
                     )
                 except Exception:
                     pass

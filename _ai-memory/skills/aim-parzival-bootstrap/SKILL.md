@@ -197,6 +197,7 @@ try:
                 session_id=session_id,
                 start_time=_trace_start,
                 end_time=datetime.now(tz=timezone.utc),
+                tags=["skill", "bootstrap"],
             )
         except Exception:
             pass

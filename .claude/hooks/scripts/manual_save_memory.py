@@ -218,6 +218,7 @@ This session summary was manually saved by the user using /save-memory command.
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=project_name,
+                    tags=["capture", "skill"],
                 )
             except Exception:
                 pass

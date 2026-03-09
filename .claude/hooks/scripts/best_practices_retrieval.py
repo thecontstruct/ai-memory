@@ -473,6 +473,7 @@ def main() -> int:
                         parent_span_id=None,
                         session_id=bp_session_id,
                         project_id=project_name,
+                        tags=["retrieval"],
                     )
                 except Exception:
                     pass

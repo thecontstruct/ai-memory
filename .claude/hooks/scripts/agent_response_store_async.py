@@ -171,6 +171,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -193,6 +194,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -278,6 +280,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                         trace_id=trace_id,
                         session_id=session_id,
                         project_id=group_id,
+                        tags=["capture", "discussions"],
                     )
                 except Exception:
                     pass
@@ -363,6 +366,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                                 trace_id=trace_id,
                                 session_id=session_id,
                                 project_id=group_id,
+                                tags=["capture", "discussions"],
                             )
                         except Exception:
                             pass
@@ -382,6 +386,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                                 trace_id=trace_id,
                                 session_id=session_id,
                                 project_id=group_id,
+                                tags=["capture", "discussions"],
                             )
                         except Exception:
                             pass
@@ -444,6 +449,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -577,6 +583,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -637,6 +644,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -702,6 +710,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -785,6 +794,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
