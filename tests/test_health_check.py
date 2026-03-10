@@ -11,16 +11,12 @@ Updated per code review (2026-01-14):
 - Updated warning/failure logic tests
 """
 
+# Import health-check module using importlib for hyphenated module name
+import importlib.util
 import json
 import os
 import sys
 from unittest.mock import MagicMock, Mock, patch
-
-# Add scripts directory to path and import health-check module
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
-
-# Import after path modification - use importlib for hyphenated module name
-import importlib.util
 
 spec = importlib.util.spec_from_file_location(
     "health_check",

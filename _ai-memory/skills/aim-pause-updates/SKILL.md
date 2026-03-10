@@ -147,6 +147,22 @@ def main():
 
     push_skill_metrics_async("pause-updates", "success", time.perf_counter() - start_time)
 
+    # Skill tracing (PLAN-014 G-06)
+    try:
+        from memory.trace_buffer import emit_trace_event
+        emit_trace_event(
+            event_type="skill_execution",
+            data={
+                "input": f"Skill: aim-pause-updates"[:10000],
+                "output": f"Result: completed"[:10000],
+                "metadata": {"skill_name": "aim-pause-updates"},
+            },
+            session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
+            tags=["skill"],
+        )
+    except Exception:
+        pass  # Tracing failures never break skill execution
+
 
 if __name__ == "__main__":
     main()

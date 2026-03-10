@@ -373,6 +373,7 @@ def main() -> int:
                             if detect_project_func
                             else None
                         ),
+                        tags=["capture"],
                         start_time=capture_start,
                         end_time=datetime.now(tz=timezone.utc),
                     )

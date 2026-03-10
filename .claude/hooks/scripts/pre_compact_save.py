@@ -29,6 +29,7 @@ Sources:
 - Claude Hooks reference: oversight/research/Claude_Hooks_reference.md
 - Architecture: docs/memory settings/AI_MEMORY_ARCHITECTURE.md
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -91,8 +92,9 @@ try:
         ResponseHandlingException,
         UnexpectedResponse,
     )
-    from qdrant_client.models import FieldCondition, Filter, MatchValue
+    from qdrant_client.models import FieldCondition, Filter, MatchValue, SparseVector
 except ImportError:
+    SparseVector = None
     # Graceful degradation if qdrant-client not installed
     ApiException = Exception
     ResponseHandlingException = Exception
@@ -383,6 +385,8 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
             uuid.uuid4().hex
         )  # PreCompact generates own trace_id (no capture hook)
         pc_session_id = summary_data.get("session_id", "")
+        if pc_session_id and pc_session_id != "unknown":
+            os.environ["CLAUDE_SESSION_ID"] = pc_session_id
         pc_project_id = summary_data.get("group_id", "")
 
         # SPEC-021: 2_log span — content captured for processing
@@ -404,6 +408,7 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=pc_session_id,
                     project_id=pc_project_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -427,6 +432,7 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=pc_session_id,
                     project_id=pc_project_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -473,7 +479,9 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                                 emit_trace_event(
                                     event_type="4_scan",
                                     data={
-                                        "input": summary_data["content"][:TRACE_CONTENT_MAX],
+                                        "input": summary_data["content"][
+                                            :TRACE_CONTENT_MAX
+                                        ],
                                         "output": f"Scan result: blocked (findings: {len(scan_result.findings)})",
                                         "metadata": {
                                             "content_length": scan_input_length,
@@ -492,13 +500,18 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                                                 )
                                                 for f in scan_result.findings
                                             ),
-                                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                            "agent_name": os.environ.get(
+                                                "CLAUDE_AGENT_NAME", "main"
+                                            ),
+                                            "agent_role": os.environ.get(
+                                                "CLAUDE_AGENT_ROLE", "user"
+                                            ),
                                         },
                                     },
                                     trace_id=trace_id,
                                     session_id=pc_session_id,
                                     project_id=pc_project_id,
+                                    tags=["capture", "discussions"],
                                 )
                             except Exception:
                                 pass
@@ -511,13 +524,18 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                                         "metadata": {
                                             "reason": "scan_blocked",
                                             "scan_blocked": True,
-                                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                            "agent_name": os.environ.get(
+                                                "CLAUDE_AGENT_NAME", "main"
+                                            ),
+                                            "agent_role": os.environ.get(
+                                                "CLAUDE_AGENT_ROLE", "user"
+                                            ),
                                         },
                                     },
                                     trace_id=trace_id,
                                     session_id=pc_session_id,
                                     project_id=pc_project_id,
+                                    tags=["capture", "discussions"],
                                 )
                             except Exception:
                                 pass
@@ -563,6 +581,7 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=pc_session_id,
                     project_id=pc_project_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -586,6 +605,7 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=pc_session_id,
                     project_id=pc_project_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -595,20 +615,39 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
         vector = [0.0] * 768  # Default placeholder
 
         try:
-            embed_client = EmbeddingClient()
-            embeddings = embed_client.embed([summary_data["content"]])
-            vector = embeddings[0]
-            embedding_status = EmbeddingStatus.COMPLETE.value
-            logger.info(
-                "embedding_generated",
-                extra={"memory_id": memory_id, "dimensions": len(vector)},
-            )
+            with EmbeddingClient() as embed_client:
+                embeddings = embed_client.embed([summary_data["content"]])
+                vector = embeddings[0]
+                embedding_status = EmbeddingStatus.COMPLETE.value
+                logger.info(
+                    "embedding_generated",
+                    extra={"memory_id": memory_id, "dimensions": len(vector)},
+                )
         except EmbeddingError as e:
             logger.warning(
                 "embedding_failed_using_placeholder",
                 extra={"error": str(e), "memory_id": memory_id},
             )
             # Continue with zero vector - will be backfilled later
+
+        # v2.2.1: Generate BM25 sparse vector for hybrid search
+        sparse_vector = None
+        try:
+            from memory.config import get_config as _get_config
+
+            _cfg = _get_config()
+            if (
+                _cfg.hybrid_search_enabled
+                and embedding_status == EmbeddingStatus.COMPLETE.value
+            ):
+                with EmbeddingClient(_cfg) as sparse_client:
+                    sparse_results = sparse_client.embed_sparse(
+                        [summary_data["content"]]
+                    )
+                    if sparse_results and sparse_results[0]:
+                        sparse_vector = sparse_results[0]
+        except Exception as e:
+            logger.debug("sparse_embedding_skipped", extra={"error": str(e)})
 
         # SPEC-021: 6_embed span — embedding generation
         if emit_trace_event:
@@ -630,6 +669,7 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=pc_session_id,
                     project_id=pc_project_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -656,10 +696,20 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
         }
 
         # Store to discussions collection (v2.0)
+        # v2.2.1: Use dict vector format when sparse available
+        if sparse_vector is not None and SparseVector is not None:
+            point_vector = {
+                "": vector,
+                "bm25": SparseVector(
+                    indices=sparse_vector["indices"], values=sparse_vector["values"]
+                ),
+            }
+        else:
+            point_vector = vector
         client = get_qdrant_client()
         client.upsert(
             collection_name=COLLECTION_DISCUSSIONS,
-            points=[PointStruct(id=memory_id, vector=vector, payload=payload)],
+            points=[PointStruct(id=memory_id, vector=point_vector, payload=payload)],
         )
 
         # SPEC-021: 7_store span — data persisted to Qdrant
@@ -681,6 +731,7 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=pc_session_id,
                     project_id=pc_project_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -705,6 +756,7 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=pc_session_id,
                     project_id=pc_project_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -949,10 +1001,7 @@ def should_store_summary(summary_data: dict[str, Any]) -> bool:
         len(tools_used) == 0 and files_modified == 0 and user_interactions == 0
     )
 
-    if has_no_activity:
-        return False
-
-    return True
+    return not has_no_activity
 
 
 def check_duplicate_hash(content_hash: str, group_id: str, client) -> str | None:
@@ -1189,15 +1238,6 @@ def main() -> int:
                 f"📤 AI Memory: Session summary saved for {project} (trigger: {trigger}) [{duration_ms:.0f}ms]",
                 file=sys.stderr,
             )
-
-        # Activity log with full content
-        tools_list = (
-            ", ".join(transcript_analysis["tools_used"])
-            if transcript_analysis["tools_used"]
-            else "None"
-        )
-        files_count = len(transcript_analysis["files_modified"])
-        prompts_count = transcript_analysis["user_prompts_count"]
 
         # Log summary header
         session_id = summary_data.get("session_id", "unknown")

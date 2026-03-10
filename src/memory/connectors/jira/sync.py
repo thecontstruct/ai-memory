@@ -23,6 +23,7 @@ Error Handling:
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
 import asyncio
+import atexit
 import contextlib
 import json
 import logging
@@ -43,8 +44,30 @@ try:
     from ...trace_buffer import emit_trace_event
 except ImportError:
     emit_trace_event = None
-from .client import JiraClient
-from .composer import compose_comment_document, compose_issue_document
+
+try:
+    from langfuse import get_client as _langfuse_get_client
+except ImportError:
+    _langfuse_get_client = None  # type: ignore[assignment]
+
+
+def _langfuse_shutdown():
+    """Flush and shutdown Langfuse client on process exit (TD-248)."""
+    if _langfuse_get_client is not None:
+        try:
+            client = _langfuse_get_client()
+            if client:
+                client.flush()
+                client.shutdown()
+        except Exception:
+            pass
+
+
+if _langfuse_get_client is not None:
+    atexit.register(_langfuse_shutdown)
+
+from .client import JiraClient  # noqa: E402
+from .composer import compose_comment_document, compose_issue_document  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +222,7 @@ class JiraSyncEngine:
                         },
                         session_id="jira_sync",
                         start_time=trace_start_time,
+                        tags=["jira"],
                     )
 
             # Fetch issues with pagination
@@ -272,6 +296,7 @@ class JiraSyncEngine:
                         session_id="jira_sync",
                         start_time=trace_start_time,
                         end_time=datetime.now(timezone.utc),
+                        tags=["jira"],
                     )
 
             return SyncResult(
@@ -310,6 +335,7 @@ class JiraSyncEngine:
                         session_id="jira_sync",
                         start_time=start_time,
                         end_time=datetime.now(timezone.utc),
+                        tags=["jira"],
                     )
             return SyncResult(errors=[str(e)], duration_seconds=duration)
 

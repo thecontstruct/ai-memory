@@ -101,7 +101,7 @@ def store_manual_summary(project_name: str, description: str, session_id: str) -
     try:
         import uuid
 
-        from qdrant_client.models import PointStruct
+        from qdrant_client.models import PointStruct, SparseVector
 
         from memory.models import EmbeddingStatus
         from memory.validation import compute_content_hash
@@ -145,6 +145,19 @@ This session summary was manually saved by the user using /save-memory command.
             )
             # Continue with zero vector - will be backfilled later
 
+        # v2.2.1: Generate BM25 sparse vector for hybrid search
+        sparse_vector = None
+        try:
+            from memory.config import get_config as _get_config
+            _cfg = _get_config()
+            if _cfg.hybrid_search_enabled and embedding_status == EmbeddingStatus.COMPLETE.value:
+                with EmbeddingClient(_cfg) as sparse_client:
+                    sparse_results = sparse_client.embed_sparse([summary_content])
+                    if sparse_results and sparse_results[0]:
+                        sparse_vector = sparse_results[0]
+        except Exception as e:
+            logger.debug("sparse_embedding_skipped", extra={"error": str(e)})
+
         payload = {
             "content": summary_content,
             "content_hash": content_hash,
@@ -161,10 +174,18 @@ This session summary was manually saved by the user using /save-memory command.
         }
 
         # Store to discussions collection
+        # v2.2.1: Use dict vector format when sparse available
+        if sparse_vector is not None and SparseVector is not None:
+            point_vector = {
+                "": vector,
+                "bm25": SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"]),
+            }
+        else:
+            point_vector = vector
         client = get_qdrant_client()
         client.upsert(
             collection_name=COLLECTION_DISCUSSIONS,
-            points=[PointStruct(id=memory_id, vector=vector, payload=payload)],
+            points=[PointStruct(id=memory_id, vector=point_vector, payload=payload)],
         )
 
         logger.info(
@@ -197,6 +218,7 @@ This session summary was manually saved by the user using /save-memory command.
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=project_name,
+                    tags=["capture", "skill"],
                 )
             except Exception:
                 pass
@@ -286,7 +308,7 @@ def main() -> int:
     project_name = detect_project(cwd)
 
     # Get session ID from environment (set by Claude Code)
-    session_id = os.environ.get("CLAUDE_SESSION_ID", "unknown")
+    session_id = os.environ.get("CLAUDE_SESSION_ID")
 
     # Agent memory storage path (SPEC-017 S4)
     if type_override in ("agent_memory", "agent_insight"):

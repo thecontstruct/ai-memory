@@ -37,11 +37,13 @@ try:
         ResponseHandlingException,
         UnexpectedResponse,
     )
+    from qdrant_client.models import SparseVector
 except ImportError:
     # Graceful degradation if qdrant-client not installed
     AsyncQdrantClient = None
     ResponseHandlingException = Exception
     UnexpectedResponse = Exception
+    SparseVector = None
 
 try:
     from memory.validation import compute_content_hash
@@ -240,6 +242,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -262,6 +265,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -318,6 +322,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                                 trace_id=trace_id,
                                 session_id=session_id,
                                 project_id=group_id,
+                                tags=["capture", "code-patterns"],
                             )
                         except Exception:
                             pass
@@ -337,6 +342,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                                 trace_id=trace_id,
                                 session_id=session_id,
                                 project_id=group_id,
+                                tags=["capture", "code-patterns"],
                             )
                         except Exception:
                             pass
@@ -401,6 +407,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -481,6 +488,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -524,6 +532,21 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
             vector = [0.0] * config.embedding_dimension
             payload["embedding_status"] = "pending"
 
+        # v2.2.1: Generate BM25 sparse vector for hybrid search
+        sparse_vector = None
+        if config.hybrid_search_enabled and payload["embedding_status"] == "complete":
+            try:
+                from memory.embeddings import EmbeddingClient as _EmbClient
+
+                def _generate_sparse():
+                    with _EmbClient(config) as sc:
+                        results = sc.embed_sparse([content])
+                        return results[0] if results else None
+
+                sparse_vector = await asyncio.to_thread(_generate_sparse)
+            except Exception as e:
+                logger.debug("sparse_embedding_skipped", extra={"error": str(e)})
+
         # SPEC-021: 6_embed span — embedding generation
         if emit_trace_event:
             try:
@@ -544,14 +567,23 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
 
         # Store to Qdrant
+        # v2.2.1: Use dict vector format when sparse available
+        if sparse_vector is not None and SparseVector is not None:
+            point_vector = {
+                "": vector,
+                "bm25": SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"]),
+            }
+        else:
+            point_vector = vector
         await client.upsert(
             collection_name=collection_name,
-            points=[{"id": memory_id, "payload": payload, "vector": vector}],
+            points=[{"id": memory_id, "payload": payload, "vector": point_vector}],
         )
 
         # SPEC-021: 7_store span — data persisted to Qdrant
@@ -572,6 +604,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass
@@ -595,6 +628,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "code-patterns"],
                 )
             except Exception:
                 pass

@@ -83,11 +83,13 @@ try:
         UnexpectedResponse,
     )
     from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
+    from qdrant_client.models import SparseVector
 except ImportError:
     PointStruct = None
     Filter = None
     FieldCondition = None
     MatchValue = None
+    SparseVector = None
     ApiException = Exception
     ResponseHandlingException = Exception
     UnexpectedResponse = Exception
@@ -169,6 +171,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -191,6 +194,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -276,6 +280,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                         trace_id=trace_id,
                         session_id=session_id,
                         project_id=group_id,
+                        tags=["capture", "discussions"],
                     )
                 except Exception:
                     pass
@@ -361,6 +366,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                                 trace_id=trace_id,
                                 session_id=session_id,
                                 project_id=group_id,
+                                tags=["capture", "discussions"],
                             )
                         except Exception:
                             pass
@@ -380,6 +386,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                                 trace_id=trace_id,
                                 session_id=session_id,
                                 project_id=group_id,
+                                tags=["capture", "discussions"],
                             )
                         except Exception:
                             pass
@@ -442,6 +449,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -575,6 +583,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -605,6 +614,16 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
             vectors = [[0.0] * config.embedding_dimension for _ in chunks_to_store]
             embedding_status = "pending"
 
+        # v2.2.1: Generate BM25 sparse vectors for hybrid search
+        sparse_vectors = [None] * len(chunks_to_store)
+        if config.hybrid_search_enabled and embedding_status == "complete":
+            try:
+                with EmbeddingClient(config) as sparse_client:
+                    sparse_results = sparse_client.embed_sparse(chunk_contents)
+                    sparse_vectors = sparse_results if sparse_results else sparse_vectors
+            except Exception as e:
+                logger.debug("sparse_embedding_skipped", extra={"error": str(e)})
+
         # SPEC-021: 6_embed span — embedding generation
         if emit_trace_event:
             try:
@@ -625,14 +644,15 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
 
         # Build points for all chunks
         points = []
-        for i, ((chunk_content, chunk_meta), vector) in enumerate(
-            zip(chunks_to_store, vectors)
+        for i, ((chunk_content, chunk_meta), vector, sparse) in enumerate(
+            zip(chunks_to_store, vectors, sparse_vectors)
         ):
             chunk_id = (
                 str(
@@ -657,8 +677,16 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                 "embedding_status": embedding_status,
                 "chunking_metadata": chunk_meta,
             }
+            # v2.2.1: Use dict vector format when sparse available
+            if sparse is not None and SparseVector is not None:
+                point_vector = {
+                    "": vector,
+                    "bm25": SparseVector(indices=sparse["indices"], values=sparse["values"]),
+                }
+            else:
+                point_vector = vector
             points.append(
-                PointStruct(id=chunk_id, vector=vector, payload=chunk_payload)
+                PointStruct(id=chunk_id, vector=point_vector, payload=chunk_payload)
             )
 
         # Store all chunks to Qdrant
@@ -682,6 +710,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass
@@ -765,6 +794,7 @@ def store_agent_response(store_data: dict[str, Any]) -> bool:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", "discussions"],
                 )
             except Exception:
                 pass

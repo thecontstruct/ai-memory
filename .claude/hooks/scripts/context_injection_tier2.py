@@ -105,7 +105,8 @@ def main() -> int:
         _tier2_root_span_id = _uuid4().hex
         os.environ["LANGFUSE_TRACE_ID"] = _tier2_trace_id
         os.environ["LANGFUSE_ROOT_SPAN_ID"] = _tier2_root_span_id
-        os.environ["CLAUDE_SESSION_ID"] = session_id
+        if session_id and session_id != "unknown":
+            os.environ["CLAUDE_SESSION_ID"] = session_id
 
         # Check if injection is enabled
         if not config.injection_enabled:
@@ -227,6 +228,7 @@ def main() -> int:
                         parent_span_id=None,
                         session_id=session_id,
                         project_id=project_name,
+                        tags=["retrieval", "injection"],
                         start_time=_wall_start,
                     )
                 except Exception:
@@ -238,16 +240,24 @@ def main() -> int:
         # Sort by score descending
         all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
 
-        # Confidence gate
+        # Soft confidence gate (3-tier: skip / soft / full)
         best_score = all_results[0].get("score", 0) if all_results else 0.0
 
-        if best_score < config.injection_confidence_threshold:
-            # Skip injection — results not relevant enough
+        _conf_threshold = config.injection_confidence_threshold
+        if best_score < _conf_threshold - 0.05:
+            gating_mode = "skip"
+        elif best_score < _conf_threshold:
+            gating_mode = "soft"
+        else:
+            gating_mode = "full"
+
+        if gating_mode == "skip":
             logger.info(
                 "tier2_confidence_skip",
                 extra={
                     "best_score": round(best_score, 4),
-                    "threshold": config.injection_confidence_threshold,
+                    "threshold": _conf_threshold - 0.05,
+                    "gating_mode": gating_mode,
                     "session_id": session_id,
                     "turn": state.turn_count,
                 },
@@ -264,6 +274,7 @@ def main() -> int:
                 audit_dir=config.audit_dir,
                 best_score=best_score,
                 skipped_confidence=True,
+                gating_mode=gating_mode,
                 collections_searched=collection_names,
             )
             state.save()
@@ -289,11 +300,27 @@ def main() -> int:
             config=config,
         )
 
+        # Soft gating: halve budget for marginal confidence (threshold-0.05 to threshold)
+        if gating_mode == "soft":
+            original_budget = budget
+            budget = max(50, budget // 2)
+            logger.info(
+                "tier2_soft_gating",
+                extra={
+                    "best_score": round(best_score, 4),
+                    "gating_mode": gating_mode,
+                    "original_budget": original_budget,
+                    "reduced_budget": budget,
+                    "session_id": session_id,
+                },
+            )
+
         # Greedy fill with deduplication
         selected, tokens_used = select_results_greedy(
             results=all_results,
             budget=budget,
             excluded_ids=state.injected_point_ids,
+            score_gap_threshold=config.injection_score_gap_threshold,
         )
 
         if not selected:
@@ -340,6 +367,8 @@ def main() -> int:
             audit_dir=config.audit_dir,
             best_score=best_score,
             skipped_confidence=False,
+            gating_mode=gating_mode,
+            gap_threshold=config.injection_score_gap_threshold,
             topic_drift=drift,
             collections_searched=collection_names,
         )
@@ -362,6 +391,8 @@ def main() -> int:
                             "budget": budget,
                             "best_score": round(best_score, 4),
                             "topic_drift": round(drift, 4),
+                            "gating_mode": gating_mode,
+                            "gap_threshold": config.injection_score_gap_threshold,
                             "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
                             "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                         },
@@ -370,6 +401,7 @@ def main() -> int:
                     parent_span_id=None,
                     session_id=session_id,
                     project_id=project_name,
+                    tags=["retrieval", "injection"],
                     start_time=_wall_start,
                 )
             except Exception:
@@ -442,6 +474,7 @@ def main() -> int:
                     parent_span_id=None,
                     session_id=session_id if "session_id" in dir() else "unknown",  # type: ignore[name-defined]
                     project_id=project_name,
+                    tags=["retrieval", "injection"],
                     start_time=_wall_start if "_wall_start" in dir() else None,  # type: ignore[name-defined]
                 )
             except Exception:

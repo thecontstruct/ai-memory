@@ -127,6 +127,8 @@ def main() -> int:
         tool_input = hook_input.get("tool_input", {})
         cwd = hook_input.get("cwd", os.getcwd())
         session_id = hook_input.get("session_id", "unknown")
+        if session_id and session_id != "unknown":
+            os.environ["CLAUDE_SESSION_ID"] = session_id
 
         # Validate this is an Edit tool
         if tool_name != "Edit":
@@ -273,6 +275,7 @@ def main() -> int:
                         trace_id=uuid4().hex,
                         session_id=session_id,
                         project_id=project_name,
+                        tags=["retrieval"],
                     )
                 except Exception:
                     logger.debug("trace_event_failed_pattern_retrieval")

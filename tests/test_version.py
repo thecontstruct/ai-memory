@@ -7,15 +7,9 @@ Tests verify 2026 best practices:
 - Graceful degradation on network errors
 """
 
-import sys
+import importlib.util
 from pathlib import Path
 from unittest.mock import Mock, patch
-
-# Add scripts to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-import importlib.util
 
 import httpx
 

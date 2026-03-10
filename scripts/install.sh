@@ -980,8 +980,59 @@ update_shared_scripts() {
     done
     log_debug "Synced .claude/ shims to INSTALL_DIR"
 
-    if [[ $updated_count -gt 0 || $hooks_count -gt 0 ]]; then
-        log_success "Updated $updated_count shared scripts, $hooks_count hook scripts"
+    # Sync Docker files (Dockerfiles, main.py, requirements.txt, docker-compose.yml, etc.)
+    # In add-project mode, copy_files() is skipped — Docker changes must be synced here
+    local docker_source="$SCRIPT_DIR/../docker"
+    local docker_count=0
+    if [[ -d "$docker_source" ]]; then
+        mkdir -p "$INSTALL_DIR/docker"
+
+        # TD-198: Back up existing docker/.env BEFORE bulk copy to prevent overwrite
+        local _env_backup=""
+        if [[ -f "$INSTALL_DIR/docker/.env" ]]; then
+            _env_backup="$(mktemp)"
+            cp "$INSTALL_DIR/docker/.env" "$_env_backup"
+            log_debug "Backed up existing docker/.env before bulk copy"
+        fi
+
+        log_info "Syncing Docker files to installation..."
+        cp -r "$docker_source/"* "$INSTALL_DIR/docker/" || { log_error "Failed to copy docker files"; return 1; }
+        find "$INSTALL_DIR/docker" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+        # Restore docker/.env if it was backed up (bulk cp may have overwritten with template)
+        if [[ -n "$_env_backup" ]]; then
+            cp "$_env_backup" "$INSTALL_DIR/docker/.env"
+            rm -f "$_env_backup"
+            log_debug "Restored docker/.env after bulk copy"
+        fi
+
+        # Merge new keys from .env.example into restored .env (TD-198)
+        if [[ -f "$docker_source/.env.example" ]] && [[ -f "$INSTALL_DIR/docker/.env" ]]; then
+            local _new_keys=0
+            while IFS= read -r line; do
+                # Skip comments and empty lines
+                [[ "$line" =~ ^[[:space:]]*# ]] && continue
+                [[ -z "${line// }" ]] && continue
+                # Extract key (everything before first =)
+                key="${line%%=*}"
+                [[ -z "$key" ]] && continue
+                # Only append if key doesn't already exist in installed .env
+                if ! grep -q "^${key}=" "$INSTALL_DIR/docker/.env"; then
+                    echo "$line" >> "$INSTALL_DIR/docker/.env"
+                    _new_keys=$((_new_keys + 1))
+                fi
+            done < "$docker_source/.env.example"
+            if [[ $_new_keys -gt 0 ]]; then
+                log_debug "Merged $_new_keys new key(s) from .env.example into docker/.env"
+            fi
+        fi
+
+        docker_count=$(find "$docker_source" -type f -not -path "*/__pycache__/*" | wc -l)
+        log_debug "Synced $docker_count Docker files to INSTALL_DIR"
+    fi
+
+    if [[ $updated_count -gt 0 || $hooks_count -gt 0 || $docker_count -gt 0 ]]; then
+        log_success "Updated $updated_count shared scripts, $hooks_count hook scripts, $docker_count docker files"
         if [[ $archived_count -gt 0 ]]; then
             log_info "Archived $archived_count stale hook scripts to .archived/"
         fi
@@ -1854,7 +1905,7 @@ EOF
         fi
     fi
 
-    # Generate Prometheus web.yml with bcrypt hash from password
+    # Generate Prometheus healthcheck auth header from password
     generate_prometheus_auth
 }
 
@@ -1917,7 +1968,6 @@ sys.exit(asyncio.run(validate()))
 # Generate Prometheus basic auth configuration from PROMETHEUS_ADMIN_PASSWORD
 generate_prometheus_auth() {
     local docker_env="$INSTALL_DIR/docker/.env"
-    local web_yml="$INSTALL_DIR/docker/prometheus/web.yml"
 
     # Read password from .env
     local prometheus_password
@@ -1928,57 +1978,9 @@ generate_prometheus_auth() {
         return 0
     fi
 
-    # Step 1: Try Python bcrypt
-    local bcrypt_hash="" bcrypt_stderr=""
-    bcrypt_hash=$(PROM_PASS="$prometheus_password" "$INSTALL_DIR/.venv/bin/python" -c "
-import bcrypt, os
-password = os.environ['PROM_PASS'].encode('utf-8')
-hash_val = bcrypt.hashpw(password, bcrypt.gensalt(rounds=12))
-print(hash_val.decode('utf-8'))
-" 2>/tmp/bcrypt_err.log) || true
-    bcrypt_stderr=$(cat /tmp/bcrypt_err.log 2>/dev/null || echo "")
-    rm -f /tmp/bcrypt_err.log
-
-    if [[ -n "$bcrypt_stderr" && -z "$bcrypt_hash" ]]; then
-        log_warning "bcrypt generation failed: $bcrypt_stderr"
-        log_warning "Ensure bcrypt is installed: $INSTALL_DIR/.venv/bin/pip install bcrypt"
-    fi
-
-    # Step 2: Fallback to htpasswd if bcrypt failed
-    if [[ -z "$bcrypt_hash" ]]; then
-        log_debug "Trying htpasswd as bcrypt fallback..."
-        local htpasswd_output=""
-        htpasswd_output=$(htpasswd -nbBC 10 admin "$prometheus_password" 2>/dev/null) || true
-        if [[ -n "$htpasswd_output" ]]; then
-            bcrypt_hash=$(echo "$htpasswd_output" | cut -d: -f2)
-            log_debug "bcrypt hash generated via htpasswd fallback"
-        fi
-    fi
-
-    # Step 3: Graceful degradation — run without auth if neither tool worked
-    if [[ -z "$bcrypt_hash" ]]; then
-        log_warning "WARNING: Prometheus running WITHOUT authentication. Install bcrypt or apache2-utils to enable auth."
-        {
-            echo "# Prometheus Web Configuration"
-            echo "# Auto-generated by install.sh"
-            echo "# Authentication is DISABLED - install bcrypt or apache2-utils to enable"
-            echo "# Run installer again after installing bcrypt or apache2-utils"
-        } > "$web_yml"
-        return 0
-    fi
-
-    # Write web.yml with generated hash
-    # Note: printf %s prevents $ expansion issues in bcrypt hash ($2b$12$...)
-    {
-        echo "# Prometheus Web Configuration - Basic Authentication"
-        echo "# Auto-generated by install.sh from PROMETHEUS_ADMIN_PASSWORD"
-        echo "# DO NOT manually edit - regenerate by re-running installer"
-        echo ""
-        echo "basic_auth_users:"
-        printf "  admin: %s\n" "$bcrypt_hash"
-    } > "$web_yml"
-
-    log_success "Generated Prometheus auth config (bcrypt hash from password)"
+    # BLK-021: web.yml is now a template with ${BCRYPT_HASH} placeholder.
+    # The prometheus-init container generates web.yml at runtime from PROMETHEUS_ADMIN_PASSWORD.
+    # This function only generates PROMETHEUS_BASIC_AUTH_HEADER for the healthcheck.
 
     # BUG-089: Generate Base64 auth header for Prometheus healthcheck
     local auth_header
@@ -1991,7 +1993,7 @@ print(hash_val.decode('utf-8'))
         echo "# Prometheus healthcheck auth (auto-generated by install.sh)" >> "$docker_env"
         echo "PROMETHEUS_BASIC_AUTH_HEADER='$auth_header'" >> "$docker_env"
     fi
-    log_debug "Generated Prometheus healthcheck auth header"
+    log_success "Generated Prometheus healthcheck auth header"
 }
 
 # Log Docker container state for debugging (P1: container disappearance diagnosis)
@@ -3026,6 +3028,10 @@ show_success_message() {
     echo "│       _ai-memory/ package deployed to project              │"
     echo "│       Activate with: /pov:parzival-start                   │"
     fi
+    echo "│                                                             │"
+    echo "│   \033[93mHybrid search (v2.2.1):\033[0m                                  │"
+    echo "│     To enable hybrid search on existing data, run:          │"
+    echo "│     $INSTALL_DIR/scripts/enable-hybrid-search.sh            │"
     echo "│                                                             │"
     echo "├─────────────────────────────────────────────────────────────┤"
     echo "│                                                             │"

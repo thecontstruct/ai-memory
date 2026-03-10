@@ -53,8 +53,8 @@ def test_github_type_values():
 
 
 def test_total_memory_type_count():
-    """Total MemoryType count is 30 (17 existing + 9 GitHub + 4 agent)."""
-    assert len(MemoryType) == 30
+    """Total MemoryType count is 31 (18 existing + 9 GitHub + 4 agent)."""
+    assert len(MemoryType) == 31
 
 
 def test_existing_types_unchanged():

@@ -350,7 +350,8 @@ def main() -> int:
         os.environ["LANGFUSE_TRACE_ID"] = _uuid4().hex
         os.environ["LANGFUSE_ROOT_SPAN_ID"] = _bp_root_span_id
         bp_session_id = hook_input.get("session_id", "unknown")
-        os.environ["CLAUDE_SESSION_ID"] = bp_session_id
+        if bp_session_id and bp_session_id != "unknown":
+            os.environ["CLAUDE_SESSION_ID"] = bp_session_id
 
         # Check Qdrant health (graceful degradation if down)
         if not check_qdrant_health(client):
@@ -473,6 +474,7 @@ def main() -> int:
                         parent_span_id=None,
                         session_id=bp_session_id,
                         project_id=project_name,
+                        tags=["retrieval"],
                     )
                 except Exception:
                     pass

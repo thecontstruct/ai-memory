@@ -643,6 +643,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
+                                    tags=["retrieval"],
                                 )
                             except Exception:
                                 pass
@@ -709,7 +710,8 @@ def main():
                         _resume_root_span_id = _uuid4().hex
                         os.environ["LANGFUSE_TRACE_ID"] = _resume_trace_id
                         os.environ["LANGFUSE_ROOT_SPAN_ID"] = _resume_root_span_id
-                        os.environ["CLAUDE_SESSION_ID"] = session_id
+                        if session_id and session_id != "unknown":
+                            os.environ["CLAUDE_SESSION_ID"] = session_id
 
                         emit_trace_event(
                             event_type="session_bootstrap",
@@ -730,6 +732,7 @@ def main():
                             parent_span_id=None,
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval"],
                         )
                     except Exception:
                         pass
@@ -776,6 +779,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval"],
                         )
                     except Exception:
                         pass
@@ -850,7 +854,8 @@ def main():
             _compact_root_span_id = _uuid4().hex
             os.environ["LANGFUSE_TRACE_ID"] = _compact_trace_id
             os.environ["LANGFUSE_ROOT_SPAN_ID"] = _compact_root_span_id
-            os.environ["CLAUDE_SESSION_ID"] = session_id
+            if session_id and session_id != "unknown":
+                os.environ["CLAUDE_SESSION_ID"] = session_id
 
             logger.info(
                 "v2_compact_context_injection",
@@ -914,6 +919,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
+                                    tags=["retrieval", "injection"],
                                 )
                             except Exception:
                                 pass
@@ -964,6 +970,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
+                                    tags=["retrieval", "injection"],
                                 )
                             except Exception:
                                 pass
@@ -1034,6 +1041,7 @@ def main():
                                 },
                                 session_id=session_id,
                                 project_id=project_name,
+                                tags=["retrieval", "injection"],
                             )
                         except Exception:
                             pass
@@ -1239,6 +1247,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval", "injection"],
                         )
                     except Exception:
                         pass
@@ -1267,6 +1276,7 @@ def main():
                             parent_span_id=None,
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval", "injection"],
                         )
                     except Exception:
                         logger.debug("trace_event_failed_session_restore")
@@ -1324,6 +1334,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
+                            tags=["retrieval"],
                         )
                     except Exception:
                         pass
@@ -1375,6 +1386,7 @@ def main():
                         },
                         session_id=_session,
                         project_id=_project,
+                        tags=["retrieval"],
                     )
                 except Exception:
                     pass

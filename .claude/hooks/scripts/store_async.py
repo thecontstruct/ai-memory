@@ -14,6 +14,7 @@ Sources:
 - Qdrant AsyncQdrantClient: https://python-client.qdrant.tech/
 - Exception handling: https://python-client.qdrant.tech/qdrant_client.http.exceptions
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -46,11 +47,13 @@ try:
         ResponseHandlingException,
         UnexpectedResponse,
     )
+    from qdrant_client.models import SparseVector
 except ImportError:
     # Graceful degradation if qdrant-client not installed
     AsyncQdrantClient = None
     ResponseHandlingException = Exception
     UnexpectedResponse = Exception
+    SparseVector = None
 
 try:
     from memory.deduplication import is_duplicate
@@ -84,6 +87,16 @@ except ImportError:
     emit_trace_event = None
 
 TRACE_CONTENT_MAX = 10000  # Max chars for Langfuse input/output fields
+
+
+def _generate_sparse_embedding(cfg, content):
+    """Generate BM25 sparse embedding for a single text (runs in thread pool)."""
+    from memory.embeddings import EmbeddingClient
+
+    with EmbeddingClient(cfg) as sparse_client:
+        results = sparse_client.embed_sparse([content])
+        return results[0] if results else None
+
 
 # Import metrics for Prometheus instrumentation (Story 6.1)
 try:
@@ -192,6 +205,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -232,13 +246,18 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                                     "content_hash": content_hash,
                                     "matched_point_id": matched_id,
                                     "collection": collection_name,
-                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                    "agent_name": os.environ.get(
+                                        "CLAUDE_AGENT_NAME", "main"
+                                    ),
+                                    "agent_role": os.environ.get(
+                                        "CLAUDE_AGENT_ROLE", "user"
+                                    ),
                                 },
                             },
                             trace_id=trace_id,
                             session_id=session_id,
                             project_id=group_id,
+                            tags=["capture", collection_name],
                         )
                     except Exception:
                         pass
@@ -302,6 +321,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -325,13 +345,18 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                             "output": "Pipeline terminated: no patterns extracted from tool output",
                             "metadata": {
                                 "reason": "no_patterns_extracted",
-                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                "agent_name": os.environ.get(
+                                    "CLAUDE_AGENT_NAME", "main"
+                                ),
+                                "agent_role": os.environ.get(
+                                    "CLAUDE_AGENT_ROLE", "user"
+                                ),
                             },
                         },
                         trace_id=trace_id,
                         session_id=session_id,
                         project_id=group_id,
+                        tags=["capture", collection_name],
                     )
                 except Exception:
                     pass
@@ -378,19 +403,26 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                                 emit_trace_event(
                                     event_type="4_scan",
                                     data={
-                                        "input": patterns["content"][:TRACE_CONTENT_MAX],
+                                        "input": patterns["content"][
+                                            :TRACE_CONTENT_MAX
+                                        ],
                                         "output": f"Scan result: blocked (findings: {len(scan_result.findings)})",
                                         "metadata": {
                                             "scan_result": "blocked",
                                             "pii_found": False,
                                             "secrets_found": True,
-                                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                            "agent_name": os.environ.get(
+                                                "CLAUDE_AGENT_NAME", "main"
+                                            ),
+                                            "agent_role": os.environ.get(
+                                                "CLAUDE_AGENT_ROLE", "user"
+                                            ),
                                         },
                                     },
                                     trace_id=trace_id,
                                     session_id=session_id,
                                     project_id=group_id,
+                                    tags=["capture", collection_name],
                                 )
                             except Exception:
                                 pass
@@ -403,13 +435,18 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                                         "metadata": {
                                             "reason": "scan_blocked",
                                             "scan_blocked": True,
-                                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                            "agent_name": os.environ.get(
+                                                "CLAUDE_AGENT_NAME", "main"
+                                            ),
+                                            "agent_role": os.environ.get(
+                                                "CLAUDE_AGENT_ROLE", "user"
+                                            ),
                                         },
                                     },
                                     trace_id=trace_id,
                                     session_id=session_id,
                                     project_id=group_id,
+                                    tags=["capture", collection_name],
                                 )
                             except Exception:
                                 pass
@@ -457,6 +494,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -506,6 +544,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -559,7 +598,9 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                 "is_current": True,
                 "version": 1,
                 # F8/RISK-012: Agent identity for multi-agent Qdrant queries
-                "agent_id": os.environ.get("PARZIVAL_AGENT_ID", os.environ.get("AI_MEMORY_AGENT_ID", "default")),
+                "agent_id": os.environ.get(
+                    "PARZIVAL_AGENT_ID", os.environ.get("AI_MEMORY_AGENT_ID", "default")
+                ),
             }
 
             # Generate embedding synchronously for immediate searchability
@@ -582,8 +623,31 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                 vector = [0.0] * vector_size
                 payload["embedding_status"] = "pending"
 
+            # v2.2.1: Generate BM25 sparse vector for hybrid search
+            sparse_vector = None
+            if payload.get("embedding_status") == "complete":
+                try:
+                    cfg = get_config()
+                    if cfg.hybrid_search_enabled:
+                        sparse_vector = await asyncio.to_thread(
+                            _generate_sparse_embedding, cfg, chunk.content
+                        )
+                except Exception as e:
+                    logger.debug("sparse_embedding_skipped", extra={"error": str(e)})
+
+            # v2.2.1: Use dict vector format when sparse available
+            if sparse_vector is not None and SparseVector is not None:
+                point_vector = {
+                    "": vector,
+                    "bm25": SparseVector(
+                        indices=sparse_vector["indices"], values=sparse_vector["values"]
+                    ),
+                }
+            else:
+                point_vector = vector
+
             points_to_store.append(
-                {"id": memory_id, "payload": payload, "vector": vector}
+                {"id": memory_id, "payload": payload, "vector": point_vector}
             )
 
         # SPEC-021: 6_embed span — embedding generation
@@ -592,7 +656,8 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                 embed_statuses = [
                     p["payload"]["embedding_status"] for p in points_to_store
                 ]
-                dim = len(points_to_store[0]["vector"]) if points_to_store else 0
+                raw_vec = points_to_store[0]["vector"] if points_to_store else []
+                dim = len(raw_vec[""]) if isinstance(raw_vec, dict) else len(raw_vec)
                 emit_trace_event(
                     event_type="6_embed",
                     data={
@@ -611,6 +676,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -640,6 +706,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass
@@ -709,6 +776,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                     trace_id=trace_id,
                     session_id=session_id,
                     project_id=group_id,
+                    tags=["capture", collection_name],
                 )
             except Exception:
                 pass

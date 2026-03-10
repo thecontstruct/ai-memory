@@ -5,6 +5,86 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-03-10
+
+Triple Fusion Hybrid Search (PLAN-013): Dense vectors augmented with BM25 sparse vectors and optional ColBERT late interaction reranking via Qdrant's native RRF fusion. 4-path search composition with automatic fallback. RRF score normalization to [0.5, 0.95] range for compatibility with existing confidence thresholds.
+
+### Added
+- **BM25 sparse vectors**: All 5 collections gain BM25/IDF sparse embeddings via fastembed `Qdrant/bm25` model, stored alongside dense vectors
+- **ColBERT late interaction reranking** (opt-in): `COLBERT_RERANKING_ENABLED=true` adds ColBERT multi-vector reranking via embedding service `/rerank` endpoint
+- **4-path search composition**: PATH 1 (hybrid+decay), PATH 2 (hybrid-only), PATH 3 (decay-only), PATH 4 (plain dense) — automatic fallback through paths
+- **Sparse embedding in hooks**: `store_async.py` generates BM25 sparse vectors alongside dense embeddings for code-pattern storage
+- **Migration script**: `scripts/migrate_v221_hybrid_vectors.py` — idempotent, resumable migration that adds BM25 sparse vectors to existing collections
+- **Installer migration notice**: Success message includes hybrid search migration command for existing installations
+- **BM25 model pre-download**: Embedding service Dockerfile downloads `Qdrant/bm25` model at build time (no cold-start delay)
+- **`COLBERT_ENABLED` passthrough**: Docker Compose passes ColBERT toggle to embedding container
+- **Langfuse trace tags** (PLAN-014): All 93 trace emit calls now include semantic tags (capture, retrieval, injection, bootstrap, search, embedding, etc.) for Langfuse dashboard filtering
+- **Skill tracing** (PLAN-014): 9 Python-based skills instrumented with Langfuse trace events
+- **Embedding GENERATION traces** (PLAN-014): Dense, sparse, and ColBERT embedding API calls emit Langfuse GENERATION observations with model and usage metadata
+- **Turnkey hybrid search enablement**: `scripts/enable-hybrid-search.sh` and `stack.sh enable-hybrid` for one-command hybrid search setup (pre-flight checks, container rebuild, migration, verification)
+- **`discussion` memory type**: New MemoryType for general discussion points (total types: 31)
+
+### Changed
+- **`hybrid_search_enabled` default**: Changed from `True` to `False` in config.py for backward compatibility — requires explicit opt-in + migration
+- **Search result tagging**: All results now include `search_mode` field for downstream observability
+- **pytest configuration**: Migrated from `pytest.ini` to `pyproject.toml`; removed redundant `sys.path.insert()` from test files
+
+### Fixed
+- **Prometheus stale bcrypt hash** (BUG-210, BLK-021): `web.yml` had a hardcoded bcrypt hash that became stale on password changes/reinstalls, causing health check 401 failures. Init container now generates `web.yml` at runtime from `PROMETHEUS_ADMIN_PASSWORD` with a fresh bcrypt hash. Uses stock `prom/prometheus:v2.55.1` image — no custom Dockerfile required.
+- **Conditional exports** (TD-197): `AsyncSDKWrapper` names only exported when `anthropic` is installed, preventing `NameError` in embedding container
+- **DEC-062 RRF score normalization**: RRF reciprocal-rank scores (~0.01-0.05) normalized to [0.5, 0.95] range using min-max scaling. Prevents confidence gating bypass, score gap filter malfunction, and adaptive budget distortion.
+- **Missing `github` collection in decay**: `resolve_half_life()` now includes `github` collection with configurable `decay_half_life_github` (default: 14 days)
+- **EmbeddingClient resource leak**: `pre_compact_save.py` now uses `with` context manager for EmbeddingClient
+- **`COLBERT_ENABLED` env var**: Was missing from docker-compose embedding service environment
+- **Installer Option 1 Docker sync**: Add-project mode now copies Docker files (Dockerfiles, main.py, requirements.txt) and merges new `.env.example` keys — previously only full reinstall (Option 2) updated Docker files
+
+### Upgrade Instructions
+
+1. **Update code and reinstall** (from your ai-memory clone):
+   ```bash
+   cd /path/to/your/ai-memory-clone
+   git pull origin main
+   ./scripts/install.sh /path/to/your-project
+   # Select Option 1 (Add project to existing installation)
+   # This updates hooks, scripts, skills, AND Docker files
+   ```
+
+2. **Recreate Prometheus** (required — fixes health check 401):
+   ```bash
+   cd ~/.ai-memory/docker
+   unset QDRANT_API_KEY
+   docker compose --profile monitoring up -d --force-recreate prometheus-init prometheus
+   ```
+   This starts the new init container which generates `web.yml` with a fresh bcrypt hash from `PROMETHEUS_ADMIN_PASSWORD`. No image rebuild required — uses stock Prometheus image.
+
+3. **Enable hybrid search** (run from anywhere):
+   ```bash
+   unset QDRANT_API_KEY && ~/.ai-memory/scripts/enable-hybrid-search.sh
+   ```
+   Or equivalently:
+   ```bash
+   unset QDRANT_API_KEY && ~/.ai-memory/scripts/stack.sh enable-hybrid
+   ```
+   This handles everything automatically:
+   - Pre-flight checks (Docker, Qdrant, embedding health)
+   - Embedding container rebuild (adds BM25 sparse model)
+   - Configuration update (`HYBRID_SEARCH_ENABLED=true`)
+   - Data migration (adds sparse vectors to existing Qdrant points)
+   - Verification (confirms hybrid search is operational)
+
+4. **Optional — ColBERT reranking**:
+   ```bash
+   # Add to ~/.ai-memory/docker/.env BEFORE running enable-hybrid-search.sh:
+   COLBERT_ENABLED=true
+   COLBERT_RERANKING_ENABLED=true
+   ```
+
+5. **No Qdrant schema changes required**: Sparse vectors are added alongside existing dense vectors. Plain dense search continues to work without migration.
+
+> **Note**: The installer Option 1 now syncs Docker files (Dockerfiles, main.py, requirements.txt, docker-compose.yml) alongside hooks, scripts, and skills. Previous versions required Option 2 (full reinstall) for Docker changes.
+
+---
+
 ## [2.2.0] - 2026-03-08
 
 Agent-activated architecture (PLAN-011 + PLAN-012): Cross-session memory moves from automatic ambient injection to agent-activated retrieval via skills. Sessions start clean — no Qdrant noise on startup or resume. Parzival V2 deployment with deployable `_ai-memory/` package, PCB step-file workflows, constraint re-injection, and layered bootstrap skill. Installer upgraded with V2 deployment pipeline, V1-to-V2 migration, and stale matcher cleanup.
@@ -866,7 +946,11 @@ v2.0.4 Cleanup Sprint: Resolve all open bugs and actionable tech debt (PLAN-003)
 - Comprehensive documentation (README, INSTALL, TROUBLESHOOTING)
 - Test suite: Unit, Integration, E2E, Performance
 
-[Unreleased]: https://github.com/Hidden-History/ai-memory/compare/v2.0.8...HEAD
+[Unreleased]: https://github.com/Hidden-History/ai-memory/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/Hidden-History/ai-memory/compare/v2.2.0...v2.2.1
+[2.2.0]: https://github.com/Hidden-History/ai-memory/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/Hidden-History/ai-memory/compare/v2.0.9...v2.1.0
+[2.0.9]: https://github.com/Hidden-History/ai-memory/compare/v2.0.8...v2.0.9
 [2.0.8]: https://github.com/Hidden-History/ai-memory/compare/v2.0.7...v2.0.8
 [2.0.7]: https://github.com/Hidden-History/ai-memory/compare/v2.0.6...v2.0.7
 [2.0.6]: https://github.com/Hidden-History/ai-memory/compare/v2.0.5...v2.0.6

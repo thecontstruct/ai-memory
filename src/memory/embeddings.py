@@ -30,6 +30,15 @@ except ImportError:
     embedding_duration_seconds = None
     failure_events_total = None
 
+# Langfuse GENERATION tracing for embedding API calls (PLAN-014 G-11)
+# LANGFUSE: Uses Path A (trace buffer). See LANGFUSE-INTEGRATION-SPEC.md §3.1
+try:
+    from .trace_buffer import emit_trace_event
+except ImportError:
+    emit_trace_event = None
+
+TRACE_CONTENT_MAX = 10000
+
 __all__ = ["EmbeddingClient", "EmbeddingError"]
 
 logger = logging.getLogger("ai_memory.embed")
@@ -211,6 +220,31 @@ class EmbeddingClient:
                 model=model,
             )
 
+            # PLAN-014 G-11: GENERATION trace for dense embedding API call
+            if emit_trace_event:
+                with contextlib.suppress(Exception):
+                    emit_trace_event(
+                        event_type="embedding_generation",
+                        data={
+                            "input": f"Embed {len(texts)} texts (model={model})"[
+                                :TRACE_CONTENT_MAX
+                            ],
+                            "output": f"{len(embeddings)} embeddings generated"[
+                                :TRACE_CONTENT_MAX
+                            ],
+                            "model": "jina-embeddings-v2-base-en",
+                            "usage": {"input": len(texts), "output": 0},
+                            "metadata": {
+                                "text_count": len(texts),
+                                "model": model,
+                                "endpoint": "dense",
+                            },
+                        },
+                        session_id=os.environ.get("CLAUDE_SESSION_ID"),
+                        as_type="generation",
+                        tags=["embedding"],
+                    )
+
             return embeddings
 
         except httpx.TimeoutException as e:
@@ -314,6 +348,143 @@ class EmbeddingClient:
             )
 
             raise EmbeddingError(f"EMBEDDING_ERROR: {e}") from e
+
+    def embed_sparse(self, texts: list[str]) -> list[dict]:
+        """Generate BM25 sparse embeddings via embedding service.
+
+        Args:
+            texts: List of text strings to generate sparse embeddings for.
+
+        Returns:
+            List of dicts with 'indices' and 'values' keys for each input text.
+
+        Raises:
+            EmbeddingError: If request fails or service returns an error.
+        """
+        try:
+            response = self.client.post(
+                f"{self.base_url}/embed/sparse",
+                json={"texts": texts},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            sparse_embeddings = response.json()["embeddings"]
+
+            # PLAN-014 G-11: GENERATION trace for sparse embedding API call
+            if emit_trace_event:
+                with contextlib.suppress(Exception):
+                    emit_trace_event(
+                        event_type="embedding_generation",
+                        data={
+                            "input": f"Embed {len(texts)} texts (sparse BM25)"[
+                                :TRACE_CONTENT_MAX
+                            ],
+                            "output": f"{len(sparse_embeddings)} sparse embeddings generated"[
+                                :TRACE_CONTENT_MAX
+                            ],
+                            "model": "Qdrant/bm25",
+                            "usage": {"input": len(texts), "output": 0},
+                            "metadata": {
+                                "text_count": len(texts),
+                                "endpoint": "sparse",
+                            },
+                        },
+                        session_id=os.environ.get("CLAUDE_SESSION_ID"),
+                        as_type="generation",
+                        tags=["embedding"],
+                    )
+
+            return sparse_embeddings
+        except httpx.TimeoutException as e:
+            logger.error(
+                "sparse_embedding_timeout",
+                extra={
+                    "texts_count": len(texts),
+                    "base_url": self.base_url,
+                    "error": str(e),
+                },
+            )
+            raise EmbeddingError("SPARSE_EMBEDDING_TIMEOUT") from e
+        except httpx.HTTPError as e:
+            logger.error(
+                "sparse_embedding_error",
+                extra={
+                    "texts_count": len(texts),
+                    "base_url": self.base_url,
+                    "error": str(e),
+                },
+            )
+            raise EmbeddingError(f"SPARSE_EMBEDDING_ERROR: {e}") from e
+
+    def embed_late(self, texts: list[str]) -> list[list[list[float]]]:
+        """Generate ColBERT late interaction embeddings via embedding service.
+
+        Returns multi-vector embeddings for ColBERT reranking. Each text produces
+        a list of token-level vectors (list[list[float]]).
+
+        Args:
+            texts: List of text strings to generate late interaction embeddings for.
+
+        Returns:
+            List of multi-vector embeddings. Each element is a list of token vectors
+            (list[list[float]]) suitable for Qdrant's multi-vector 'colbert' named vector.
+
+        Raises:
+            EmbeddingError: If request fails or service returns an error.
+        """
+        try:
+            response = self.client.post(
+                f"{self.base_url}/embed/late",
+                json={"texts": texts},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            data = response.json()["embeddings"]
+            # Service returns [{embeddings: [[float]]}] — extract inner embeddings
+            late_embeddings = [item["embeddings"] for item in data]
+
+            # PLAN-014 G-11: GENERATION trace for late interaction (ColBERT) embedding API call
+            if emit_trace_event:
+                with contextlib.suppress(Exception):
+                    emit_trace_event(
+                        event_type="embedding_generation",
+                        data={
+                            "input": f"Embed {len(texts)} texts (ColBERT late interaction)"[
+                                :TRACE_CONTENT_MAX
+                            ],
+                            "output": f"{len(late_embeddings)} late interaction embeddings generated"[
+                                :TRACE_CONTENT_MAX
+                            ],
+                            "model": "colbert-ir/colbertv2.0",
+                            "usage": {"input": len(texts), "output": 0},
+                            "metadata": {"text_count": len(texts), "endpoint": "late"},
+                        },
+                        session_id=os.environ.get("CLAUDE_SESSION_ID"),
+                        as_type="generation",
+                        tags=["embedding"],
+                    )
+
+            return late_embeddings
+        except httpx.TimeoutException as e:
+            logger.error(
+                "late_embedding_timeout",
+                extra={
+                    "texts_count": len(texts),
+                    "base_url": self.base_url,
+                    "error": str(e),
+                },
+            )
+            raise EmbeddingError("LATE_EMBEDDING_TIMEOUT") from e
+        except httpx.HTTPError as e:
+            logger.error(
+                "late_embedding_error",
+                extra={
+                    "texts_count": len(texts),
+                    "base_url": self.base_url,
+                    "error": str(e),
+                },
+            )
+            raise EmbeddingError(f"LATE_EMBEDDING_ERROR: {e}") from e
 
     def health_check(self) -> bool:
         """Check if embedding service is healthy.
