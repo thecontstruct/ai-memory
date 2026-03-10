@@ -308,7 +308,7 @@ def main() -> int:
     project_name = detect_project(cwd)
 
     # Get session ID from environment (set by Claude Code)
-    session_id = os.environ.get("CLAUDE_SESSION_ID", "unknown")
+    session_id = os.environ.get("CLAUDE_SESSION_ID")
 
     # Agent memory storage path (SPEC-017 S4)
     if type_override in ("agent_memory", "agent_insight"):

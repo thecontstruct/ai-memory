@@ -710,7 +710,8 @@ def main():
                         _resume_root_span_id = _uuid4().hex
                         os.environ["LANGFUSE_TRACE_ID"] = _resume_trace_id
                         os.environ["LANGFUSE_ROOT_SPAN_ID"] = _resume_root_span_id
-                        os.environ["CLAUDE_SESSION_ID"] = session_id
+                        if session_id and session_id != "unknown":
+                            os.environ["CLAUDE_SESSION_ID"] = session_id
 
                         emit_trace_event(
                             event_type="session_bootstrap",
@@ -853,7 +854,8 @@ def main():
             _compact_root_span_id = _uuid4().hex
             os.environ["LANGFUSE_TRACE_ID"] = _compact_trace_id
             os.environ["LANGFUSE_ROOT_SPAN_ID"] = _compact_root_span_id
-            os.environ["CLAUDE_SESSION_ID"] = session_id
+            if session_id and session_id != "unknown":
+                os.environ["CLAUDE_SESSION_ID"] = session_id
 
             logger.info(
                 "v2_compact_context_injection",

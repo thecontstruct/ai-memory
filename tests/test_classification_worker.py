@@ -3,9 +3,17 @@
 F1: Unit tests for BUG-045 fix - health file creation at startup.
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _capture_processor_logs(caplog):
+    """Ensure caplog captures logs from classifier.processor despite propagate=False."""
+    with caplog.at_level(logging.DEBUG, logger="ai_memory.classifier.processor"):
+        yield
 
 
 @pytest.fixture
@@ -85,14 +93,9 @@ class TestHealthFileCreation:
 
     def test_touch_health_file_logs_success(self, tmp_path, caplog):
         """Test that _touch_health_file logs success (F4 fix verification)."""
-        import logging
-
         from scripts.memory.process_classification_queue import _touch_health_file
 
         tmp_path / "worker.health"
-
-        # Set up logging to capture structured logs
-        caplog.set_level(logging.DEBUG, logger="ai_memory.classifier.processor")
 
         with patch("scripts.memory.process_classification_queue.Path") as mock_path:
             mock_path_instance = MagicMock()
@@ -106,12 +109,7 @@ class TestHealthFileCreation:
 
     def test_touch_health_file_logs_failure(self, tmp_path, caplog):
         """Test that _touch_health_file logs failures (F3 fix verification)."""
-        import logging
-
         from scripts.memory.process_classification_queue import _touch_health_file
-
-        # Set up logging to capture structured logs
-        caplog.set_level(logging.WARNING, logger="ai_memory.classifier.processor")
 
         with patch("scripts.memory.process_classification_queue.Path") as mock_path:
             # Simulate permission error

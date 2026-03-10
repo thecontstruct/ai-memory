@@ -385,6 +385,8 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
             uuid.uuid4().hex
         )  # PreCompact generates own trace_id (no capture hook)
         pc_session_id = summary_data.get("session_id", "")
+        if pc_session_id and pc_session_id != "unknown":
+            os.environ["CLAUDE_SESSION_ID"] = pc_session_id
         pc_project_id = summary_data.get("group_id", "")
 
         # SPEC-021: 2_log span — content captured for processing

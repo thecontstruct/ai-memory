@@ -4,8 +4,11 @@ Tests verify async fork pattern and graceful degradation.
 Note: PUSHGATEWAY_ENABLED tests require env var set before import.
 """
 
+import logging
 import sys
 from unittest.mock import patch
+
+import pytest
 
 from memory.metrics_push import (
     VALID_STATUSES,
@@ -18,6 +21,13 @@ from memory.metrics_push import (
     push_token_metrics_async,
     push_trigger_metrics_async,
 )
+
+
+@pytest.fixture(autouse=True)
+def _capture_metrics_logs(caplog):
+    """Ensure caplog captures WARNING from metrics logger regardless of test ordering."""
+    with caplog.at_level(logging.WARNING, logger="ai_memory.metrics"):
+        yield
 
 
 class TestPushTriggerMetrics:

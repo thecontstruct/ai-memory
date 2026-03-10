@@ -240,7 +240,7 @@ class EmbeddingClient:
                                 "endpoint": "dense",
                             },
                         },
-                        session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
+                        session_id=os.environ.get("CLAUDE_SESSION_ID"),
                         as_type="generation",
                         tags=["embedding"],
                     )
@@ -389,7 +389,7 @@ class EmbeddingClient:
                                 "endpoint": "sparse",
                             },
                         },
-                        session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
+                        session_id=os.environ.get("CLAUDE_SESSION_ID"),
                         as_type="generation",
                         tags=["embedding"],
                     )
@@ -459,7 +459,7 @@ class EmbeddingClient:
                             "usage": {"input": len(texts), "output": 0},
                             "metadata": {"text_count": len(texts), "endpoint": "late"},
                         },
-                        session_id=os.environ.get("CLAUDE_SESSION_ID", "unknown"),
+                        session_id=os.environ.get("CLAUDE_SESSION_ID"),
                         as_type="generation",
                         tags=["embedding"],
                     )

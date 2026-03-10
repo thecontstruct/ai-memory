@@ -177,6 +177,9 @@ def main() -> int:
         search = MemorySearch(config)
         cwd = hook_input.get("cwd", os.getcwd())
         project_name = detect_project(cwd)
+        _err_session_id = hook_input.get("session_id", "")
+        if _err_session_id:
+            os.environ["CLAUDE_SESSION_ID"] = _err_session_id
 
         try:
             results = search.search(

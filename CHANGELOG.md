@@ -48,14 +48,13 @@ Triple Fusion Hybrid Search (PLAN-013): Dense vectors augmented with BM25 sparse
    # This updates hooks, scripts, skills, AND Docker files
    ```
 
-2. **Enable hybrid search** (from installed location):
+2. **Enable hybrid search** (run from anywhere):
    ```bash
-   cd ~/.ai-memory
-   ./scripts/enable-hybrid-search.sh
+   unset QDRANT_API_KEY && ~/.ai-memory/scripts/enable-hybrid-search.sh
    ```
    Or equivalently:
    ```bash
-   ~/.ai-memory/scripts/stack.sh enable-hybrid
+   unset QDRANT_API_KEY && ~/.ai-memory/scripts/stack.sh enable-hybrid
    ```
    This handles everything automatically:
    - Pre-flight checks (Docker, Qdrant, embedding health)

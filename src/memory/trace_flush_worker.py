@@ -251,7 +251,7 @@ def _process_event_otel(event: dict, data: dict) -> None:
             ),
         )
         if event.get("tags"):
-            otel_span.set_attribute("langfuse.trace.tags", json.dumps(event["tags"]))
+            otel_span.set_attribute("langfuse.trace.tags", event["tags"])
 
     if end_ns is not None:
         otel_span.end(end_time=end_ns)

@@ -105,7 +105,8 @@ def main() -> int:
         _tier2_root_span_id = _uuid4().hex
         os.environ["LANGFUSE_TRACE_ID"] = _tier2_trace_id
         os.environ["LANGFUSE_ROOT_SPAN_ID"] = _tier2_root_span_id
-        os.environ["CLAUDE_SESSION_ID"] = session_id
+        if session_id and session_id != "unknown":
+            os.environ["CLAUDE_SESSION_ID"] = session_id
 
         # Check if injection is enabled
         if not config.injection_enabled:
