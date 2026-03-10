@@ -12,6 +12,7 @@ References:
 """
 
 import os
+import stat
 import sys
 import tempfile
 
@@ -25,6 +26,7 @@ def atomic_write(path, content):
     try:
         with os.fdopen(fd, 'w') as f:
             f.write(content)
+        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
         os.rename(tmp_path, path)
     except Exception:
         os.unlink(tmp_path)
@@ -44,6 +46,8 @@ def main():
 
     runtime_dir = '/etc/prometheus/runtime'
     os.makedirs(runtime_dir, exist_ok=True)
+    # Prometheus runs as nobody (65534) — directory must be world-readable
+    os.chmod(runtime_dir, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
 
     # Clear stale configs to prevent prometheus from reading outdated files
     # if this init container fails after partial write
