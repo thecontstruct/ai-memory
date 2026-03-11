@@ -31,7 +31,7 @@ be referenced across sessions.
 
 - Any agent instruction that produces an oversight document
 - Parzival's own session handoffs (use `{project-root}/_ai-memory/pov/templates/session-handoff.template.md`)
-- Decision logging (use entry format from `{project-root}/_ai-memory/pov/templates/decision-log.template.md`)
+- Decision logging (use entry format from `{project-root}/templates/oversight/tracking/decision-log.md`)
 
 ## What This Does NOT Apply To
 

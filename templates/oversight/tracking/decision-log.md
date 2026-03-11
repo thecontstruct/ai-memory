@@ -1,6 +1,6 @@
 # Decision Log
 
-**Last Updated**: 2026-03-10
+**Last Updated**: [YYYY-MM-DD]
 **Format**: Append-only — add new entries at the top, newest first
 
 ---
@@ -10,7 +10,7 @@
 - Quick decisions go here (1-3 lines per entry)
 - Architectural decisions that need full analysis go in `oversight/decisions/DEC-XXX.md` using the full ADR template
 - Reference this log in the task tracker when a decision affects a task
-- Use the entry format from `_ai-memory/pov/templates/decision-log.template.md`
+- Use the entry format in the "## Entry Format" section below
 
 ## Entry Format
 

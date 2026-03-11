@@ -36,7 +36,7 @@ context: fork
    - **Numbered** (for generic work): `dev-1`, `dev-2`, `review-1` — interchangeable agents
    - **Single-instance**: `pm`, `architect` — use role name directly
    - Same `AI_MEMORY_AGENT_ID` across sessions enables cross-session memory accumulation
-   - Reference: Behavior Spec §2.3.2 naming conventions
+   - Naming rules: domain-named agents always work the same domain/files across sessions; numbered agents are interchangeable for generic parallel work; single-instance agents use role name directly
 4. Select models: Sonnet for implementation, Opus for complex architecture/review
 
 ### Step 3: File Ownership Map

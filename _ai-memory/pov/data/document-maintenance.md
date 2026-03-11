@@ -14,7 +14,9 @@ description: "Review cycle schedule and archival policy for oversight documents"
 | **Monthly** | Templates, risk-register.md | Check for staleness, update if process changed |
 | **Quarterly** | Architecture docs, standards | Review for drift, archive old session-index months |
 
-## Archival Policy
+## Local Document Archival
+
+> Use this for archiving local documents within a project subdirectory (e.g., sprint plans, phase docs).
 
 Archive a document when:
 - Work is complete and verified
@@ -25,7 +27,7 @@ Archive a document when:
 ### Archival Rules
 - Move to `archive/` subdirectory within the same parent
 - Retain all content (never delete archived documents)
-- Include archive date: `{original-name}_archived_{YYYY-MM-DD}.md`
+- Include archive date: `{original-name}-archived-{YYYY-MM-DD}.md`
 - Update any index files that referenced the archived document
 - Add a one-line note in the parent index pointing to the archive location
 
@@ -33,7 +35,7 @@ Archive a document when:
 
 | Trigger | Action |
 |---------|--------|
-| SESSION_WORK_INDEX > 80 lines | Shard oldest sessions to `session-index/{YYYY-MM}/week-{N}.md` |
+| SESSION_WORK_INDEX > 80 lines | Append each archived session as a new row in `{oversight_path}/session-index/INDEX.md` |
 | Quarter ends (Mar/Jun/Sep/Dec) | Consolidate quarter's weeks into `session-index/archive/{YYYY}-Q{N}.md` |
 | After quarterly archive | After confirming all data is present in the quarterly archive, delete individual week files for that quarter, update INDEX.md |
 

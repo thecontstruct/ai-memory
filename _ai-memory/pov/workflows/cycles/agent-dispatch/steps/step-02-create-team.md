@@ -49,7 +49,7 @@ Use the Agent tool to spawn the appropriate teammate:
   - **Numbered** (for generic parallel work): `dev-1`, `dev-2`, `review-1` — agents are interchangeable.
   - **Single-instance** agents use role name directly: `pm`, `architect`
   - Same `AI_MEMORY_AGENT_ID` across sessions enables cross-session memory accumulation via agent-scoped compact restore
-  - Reference: Behavior Spec §2.3.2 naming conventions
+  - Naming rules: domain-named agents always work the same domain/files across sessions; numbered agents are interchangeable for generic parallel work; single-instance agents use role name directly
 
 ### 5. Fresh Context Rule
 ALWAYS start fresh for:
@@ -95,9 +95,15 @@ ONLY when the team is created/confirmed and the teammate is spawned with fresh c
 - Correct teammate is spawned for the task
 - Teammate has fresh context (no contamination)
 - Naming convention followed
+- AI_MEMORY_AGENT_ID set with correct naming pattern
+- task_id stored in working context for downstream steps
+- TaskCreate skipped gracefully when CLAUDE_CODE_TASK_LIST_ID not set (task_id = null)
 
 ### FAILURE:
 - Spawning wrong teammate for the task
 - Carrying over context from prior tasks
 - Running same agent as multiple simultaneous teammates
 - Not using fresh context for new tasks
+- Not setting AI_MEMORY_AGENT_ID on agent spawn
+- Calling TaskCreate without storing returned task_id
+- Failing to handle missing CLAUDE_CODE_TASK_LIST_ID gracefully

@@ -61,6 +61,7 @@ When an agent reports a blocker that Parzival cannot resolve:
 - Pause all agent work on this task
 - If task_id is set: call **TaskUpdate** with task_id, status = `blocked`
   - This signals the TaskCompleted hook that the task is blocked (not abandoned)
+- If task_id is null: skip TaskUpdate, note "task list not updated — CLAUDE_CODE_TASK_LIST_ID not configured" in blocker log
 - Prepare escalation summary:
   - Current task
   - Which agent hit the blocker
@@ -74,6 +75,7 @@ When an agent reports a blocker that Parzival cannot resolve:
 - Document the decision in project files
 - Send resolution to agent via SendMessage
 - If task_id is set: call **TaskUpdate** with task_id, status = `in_progress` to resume
+- If task_id is null: skip TaskUpdate, note "task list not updated — CLAUDE_CODE_TASK_LIST_ID not configured" in dispatch log
 - Resume task
 
 ## CRITICAL STEP COMPLETION NOTE
