@@ -957,8 +957,11 @@ update_shared_scripts() {
     fi
 
     # Sync _ai-memory/ deployable package (PLAN-011a Phase 4)
+    # Full replace — removes stale files not in source (mirrors deploy_parzival_v2 pattern)
+    # INSTALL_DIR/_ai-memory/ is an installer-owned package cache — no user data lives here
     local aim_source="$SCRIPT_DIR/../_ai-memory"
     if [[ -d "$aim_source" ]]; then
+        rm -rf "$INSTALL_DIR/_ai-memory"
         mkdir -p "$INSTALL_DIR/_ai-memory"
         if compgen -G "$aim_source/*" > /dev/null 2>&1; then
             cp -r "$aim_source/"* "$INSTALL_DIR/_ai-memory/"
@@ -968,10 +971,13 @@ update_shared_scripts() {
     fi
 
     # Sync .claude/{skills,agents,commands} shims to INSTALL_DIR (PLAN-011a Phase 4)
-    # In add-project mode, copy_files() is skipped — these must be synced here
+    # Full replace per subdirectory — removes stale files not in source
+    # INSTALL_DIR/.claude/ is installer-owned; user custom skills/agents/commands live in
+    # PROJECT_PATH/.claude/ and are protected by prefix/subdirectory scoping in deploy_* functions
     for subdir in skills agents commands; do
         local sub_src="$SCRIPT_DIR/../.claude/$subdir"
         if [[ -d "$sub_src" ]]; then
+            rm -rf "$INSTALL_DIR/.claude/$subdir"
             mkdir -p "$INSTALL_DIR/.claude/$subdir"
             if compgen -G "$sub_src/*" > /dev/null 2>&1; then
                 cp -r "$sub_src/"* "$INSTALL_DIR/.claude/$subdir/" 2>/dev/null || true
