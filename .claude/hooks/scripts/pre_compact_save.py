@@ -354,6 +354,98 @@ def build_session_summary(
     }
 
 
+def _chunk_session_summary(
+    content: str, embedding_client, project: str = "unknown"
+) -> list[tuple[str, list[float]]]:
+    """Chunk session summary with late chunking if <= 8192 tokens (BP-028).
+
+    Returns list of (chunk_text, embedding_vector) tuples.
+    Uses Jina late chunking for context-aware embeddings when document fits in context.
+    Falls back to ProseChunker + regular embed for oversized documents.
+    """
+    from memory.chunking.base import CHARS_PER_TOKEN
+    from memory.chunking.prose_chunker import ProseChunker, ProseChunkerConfig
+    from memory.chunking.truncation import count_tokens
+    from memory.embeddings import EmbeddingError
+
+    token_count = count_tokens(content)
+    JINA_CONTEXT_LIMIT = 8192
+
+    if token_count <= JINA_CONTEXT_LIMIT:
+        # Late chunking path — full document encoding, mean-pooled per chunk
+        prose_config = ProseChunkerConfig(
+            max_chunk_size=512 * CHARS_PER_TOKEN,
+            overlap_ratio=0.15,
+        )
+        chunker = ProseChunker(prose_config)
+        chunk_results = chunker.chunk(content)
+
+        if not chunk_results:
+            # Fallback: single chunk with regular embed
+            try:
+                vectors = embedding_client.embed([content], project=project)
+                return [(content, vectors[0])]
+            except EmbeddingError:
+                return []
+
+        # Build character offsets for late chunking
+        # Cursor-based scan ensures overlapping/repeated chunks find correct positions
+        chunk_offsets = []
+        _cursor = 0
+        for _chunk in chunk_results:
+            _start = content.find(_chunk.content, _cursor)
+            if _start == -1:
+                _start = _cursor  # Fallback: use current cursor position
+            _end = _start + len(_chunk.content)
+            chunk_offsets.append((_start, _end))
+            _cursor = _start + 1  # Advance cursor past this match
+
+        try:
+            late_vectors = embedding_client.embed_with_late_chunking(
+                content, chunk_offsets, project=project
+            )
+            if len(late_vectors) == len(chunk_results):
+                return [(c.content, v) for c, v in zip(chunk_results, late_vectors)]
+            # Mismatch — fall through to regular embed
+            logger.warning(
+                "late_chunking_vector_count_mismatch",
+                extra={
+                    "expected": len(chunk_results),
+                    "received": len(late_vectors),
+                },
+            )
+        except EmbeddingError as e:
+            logger.warning(
+                "late_chunking_failed_fallback",
+                extra={"error": str(e), "token_count": token_count},
+            )
+
+    # Fallback path: ProseChunker + regular embed (>8192 tokens or late chunking failed)
+    prose_config = ProseChunkerConfig(
+        max_chunk_size=512 * CHARS_PER_TOKEN,
+        overlap_ratio=0.15,
+    )
+    chunker = ProseChunker(prose_config)
+    chunk_results = chunker.chunk(content)
+
+    if not chunk_results:
+        try:
+            vectors = embedding_client.embed(
+                [content[: JINA_CONTEXT_LIMIT * CHARS_PER_TOKEN]], project=project
+            )
+            return [(content, vectors[0])]
+        except EmbeddingError:
+            return []
+
+    chunk_texts = [c.content for c in chunk_results]
+    try:
+        vectors = embedding_client.embed(chunk_texts, project=project)
+        return list(zip(chunk_texts, vectors))
+    except EmbeddingError as e:
+        logger.warning("session_summary_embed_failed", extra={"error": str(e)})
+        return []
+
+
 def store_session_summary(summary_data: dict[str, Any]) -> bool:
     """Store session summary to discussions collection.
 
@@ -586,18 +678,57 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
             except Exception:
                 pass
 
-        # SPEC-021: 5_chunk span — session summaries stored as single whole chunk
+        # PLAN-015 WP-4: Late chunking for session summaries (BP-028)
+        # Use _chunk_session_summary() to produce (chunk_text, vector) pairs.
+        # Falls back to single zero-vector point if embedding service is unavailable.
+        chunk_pairs: list[tuple[str, list[float]]] = []
+        embedding_status = EmbeddingStatus.PENDING.value
+
+        try:
+            with EmbeddingClient() as embed_client:
+                chunk_pairs = _chunk_session_summary(
+                    summary_data["content"],
+                    embed_client,
+                    project=summary_data.get("group_id", "unknown"),
+                )
+                if chunk_pairs:
+                    embedding_status = EmbeddingStatus.COMPLETE.value
+                    logger.info(
+                        "late_chunking_complete",
+                        extra={
+                            "memory_id": memory_id,
+                            "chunk_count": len(chunk_pairs),
+                            "dimensions": len(chunk_pairs[0][1]) if chunk_pairs else 0,
+                        },
+                    )
+        except EmbeddingError as e:
+            logger.warning(
+                "embedding_failed_using_placeholder",
+                extra={"error": str(e), "memory_id": memory_id},
+            )
+
+        # Fallback: single zero-vector chunk if no chunk_pairs produced
+        if not chunk_pairs:
+            try:
+                from memory.config import get_config as _gfc
+                _embed_dim = _gfc().embedding_dimension
+            except Exception:
+                _embed_dim = 768
+            chunk_pairs = [(summary_data["content"], [0.0] * _embed_dim)]
+            embedding_status = EmbeddingStatus.PENDING.value
+
+        # SPEC-021: 5_chunk span — update with actual chunk count from late chunking
         if emit_trace_event:
             try:
                 emit_trace_event(
                     event_type="5_chunk",
                     data={
                         "input": summary_data["content"][:TRACE_CONTENT_MAX],
-                        "output": "Produced 1 chunk (whole): [session_summary]",
+                        "output": f"Produced {len(chunk_pairs)} chunk(s) (late chunking BP-028)",
                         "metadata": {
                             "content_length": len(summary_data["content"]),
-                            "num_chunks": 1,
-                            "chunk_type": "whole",
+                            "num_chunks": len(chunk_pairs),
+                            "chunk_type": "late_chunking",
                             "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
                             "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                         },
@@ -609,59 +740,21 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                 )
             except Exception:
                 pass
-
-        # Generate embedding
-        embedding_status = EmbeddingStatus.PENDING.value
-        vector = [0.0] * 768  # Default placeholder
-
-        try:
-            with EmbeddingClient() as embed_client:
-                embeddings = embed_client.embed([summary_data["content"]])
-                vector = embeddings[0]
-                embedding_status = EmbeddingStatus.COMPLETE.value
-                logger.info(
-                    "embedding_generated",
-                    extra={"memory_id": memory_id, "dimensions": len(vector)},
-                )
-        except EmbeddingError as e:
-            logger.warning(
-                "embedding_failed_using_placeholder",
-                extra={"error": str(e), "memory_id": memory_id},
-            )
-            # Continue with zero vector - will be backfilled later
-
-        # v2.2.1: Generate BM25 sparse vector for hybrid search
-        sparse_vector = None
-        try:
-            from memory.config import get_config as _get_config
-
-            _cfg = _get_config()
-            if (
-                _cfg.hybrid_search_enabled
-                and embedding_status == EmbeddingStatus.COMPLETE.value
-            ):
-                with EmbeddingClient(_cfg) as sparse_client:
-                    sparse_results = sparse_client.embed_sparse(
-                        [summary_data["content"]]
-                    )
-                    if sparse_results and sparse_results[0]:
-                        sparse_vector = sparse_results[0]
-        except Exception as e:
-            logger.debug("sparse_embedding_skipped", extra={"error": str(e)})
 
         # SPEC-021: 6_embed span — embedding generation
         if emit_trace_event:
             try:
+                first_vec_dim = len(chunk_pairs[0][1]) if chunk_pairs else 768
                 emit_trace_event(
                     event_type="6_embed",
                     data={
-                        "input": "Embedding 1 chunk",
-                        "output": f"Generated 1 vector ({len(vector)}-dim) — status: {embedding_status}",
+                        "input": f"Embedding {len(chunk_pairs)} chunk(s) via late chunking",
+                        "output": f"Generated {len(chunk_pairs)} vector(s) ({first_vec_dim}-dim) — status: {embedding_status}",
                         "metadata": {
-                            "num_chunks": 1,
+                            "num_chunks": len(chunk_pairs),
                             "embedding_status": embedding_status,
-                            "num_vectors": 1,
-                            "dimensions": len(vector),
+                            "num_vectors": len(chunk_pairs),
+                            "dimensions": first_vec_dim,
                             "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
                             "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                         },
@@ -674,56 +767,94 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
             except Exception:
                 pass
 
-        payload = {
-            "content": summary_data["content"],
-            "content_hash": content_hash,
-            "group_id": summary_data["group_id"],
-            "type": summary_data["memory_type"],
-            "source_hook": summary_data["source_hook"],
-            "session_id": summary_data["session_id"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "created_at": datetime.now(
-                timezone.utc
-            ).isoformat(),  # V2.1: Explicit created_at
-            "embedding_status": embedding_status,
-            "embedding_model": "jina-embeddings-v2-base-en",
-            "importance": summary_data.get("importance", "normal"),
-            # V2.1: Rich conversation context for post-compact injection
-            "first_user_prompt": summary_data.get("first_user_prompt", ""),
-            "last_user_prompts": summary_data.get("last_user_prompts", []),
-            "last_agent_responses": summary_data.get("last_agent_responses", []),
-            "session_metadata": summary_data.get("session_metadata", {}),
-        }
+        # v2.2.1: Generate BM25 sparse vector for hybrid search (per chunk)
+        sparse_vectors: list = [None] * len(chunk_pairs)
+        try:
+            from memory.config import get_config as _get_config
 
-        # Store to discussions collection (v2.0)
-        # v2.2.1: Use dict vector format when sparse available
-        if sparse_vector is not None and SparseVector is not None:
-            point_vector = {
-                "": vector,
-                "bm25": SparseVector(
-                    indices=sparse_vector["indices"], values=sparse_vector["values"]
-                ),
+            _cfg = _get_config()
+            if _cfg.hybrid_search_enabled and embedding_status == EmbeddingStatus.COMPLETE.value:
+                with EmbeddingClient(_cfg) as sparse_client:
+                    chunk_texts_for_sparse = [cp[0] for cp in chunk_pairs]
+                    sparse_results = sparse_client.embed_sparse(chunk_texts_for_sparse)
+                    if sparse_results:
+                        sparse_vectors = sparse_results
+        except Exception as e:
+            logger.debug("sparse_embedding_skipped", extra={"error": str(e)})
+
+        # Build and store one Qdrant point per chunk
+        import uuid as _uuid
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        points_to_upsert = []
+
+        for chunk_idx, (chunk_text, vector) in enumerate(chunk_pairs):
+            chunk_memory_id = str(_uuid.uuid4()) if chunk_idx > 0 else memory_id
+            sv = sparse_vectors[chunk_idx] if chunk_idx < len(sparse_vectors) else None
+
+            chunk_payload = {
+                "content": chunk_text,
+                "content_hash": content_hash,
+                "group_id": summary_data["group_id"],
+                "type": summary_data["memory_type"],
+                "source_hook": summary_data["source_hook"],
+                "session_id": summary_data["session_id"],
+                "timestamp": now_iso,
+                "created_at": now_iso,  # V2.1: Explicit created_at
+                "embedding_status": embedding_status,
+                "embedding_model": "jina-embeddings-v2-base-en",
+                "importance": summary_data.get("importance", "normal"),
+                # V2.1: Rich conversation context for post-compact injection
+                "first_user_prompt": summary_data.get("first_user_prompt", ""),
+                "last_user_prompts": summary_data.get("last_user_prompts", []),
+                "last_agent_responses": summary_data.get("last_agent_responses", []),
+                "session_metadata": summary_data.get("session_metadata", {}),
+                # PLAN-015 WP-4: Chunk provenance
+                "chunk_index": chunk_idx,
+                "total_chunks": len(chunk_pairs),
+                "chunk_type": "late_chunking",
+                # Decay formula fields — stored_at required to prevent 2020 fallback → max decay
+                "stored_at": now_iso,
+                "decay_score": 1.0,
+                "freshness_status": "unverified",
+                "source_authority": 0.5,
+                "is_current": True,
+                "version": 1,
             }
-        else:
-            point_vector = vector
+
+            if sv is not None and SparseVector is not None:
+                point_vector = {
+                    "": vector,
+                    "bm25": SparseVector(
+                        indices=sv["indices"], values=sv["values"]
+                    ),
+                }
+            else:
+                point_vector = vector
+
+            points_to_upsert.append(
+                PointStruct(id=chunk_memory_id, vector=point_vector, payload=chunk_payload)
+            )
+
         client = get_qdrant_client()
         client.upsert(
             collection_name=COLLECTION_DISCUSSIONS,
-            points=[PointStruct(id=memory_id, vector=point_vector, payload=payload)],
+            points=points_to_upsert,
         )
 
         # SPEC-021: 7_store span — data persisted to Qdrant
+        stored_ids = [str(p.id) for p in points_to_upsert]
         if emit_trace_event:
             try:
                 emit_trace_event(
                     event_type="7_store",
                     data={
-                        "input": f"Storing 1 point to {COLLECTION_DISCUSSIONS}",
-                        "output": f"Stored 1 point (ID: {memory_id})",
+                        "input": f"Storing {len(points_to_upsert)} point(s) to {COLLECTION_DISCUSSIONS}",
+                        "output": f"Stored {len(points_to_upsert)} point(s) (IDs: {stored_ids[:5]})",
                         "metadata": {
-                            "num_points": 1,
+                            "num_points": len(points_to_upsert),
                             "collection": COLLECTION_DISCUSSIONS,
-                            "points_stored": 1,
+                            "points_stored": len(points_to_upsert),
                             "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
                             "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                         },
@@ -742,10 +873,10 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
                 emit_trace_event(
                     event_type="8_enqueue",
                     data={
-                        "input": f"Enqueuing 1 point for classification (collection: {COLLECTION_DISCUSSIONS})",
+                        "input": f"Enqueuing {len(points_to_upsert)} point(s) for classification (collection: {COLLECTION_DISCUSSIONS})",
                         "output": f"Enqueued: False (queue: {COLLECTION_DISCUSSIONS}) — classifier not integrated for session summaries",
                         "metadata": {
-                            "point_id": memory_id,
+                            "point_ids": stored_ids[:5],
                             "collection": COLLECTION_DISCUSSIONS,
                             "current_type": "session",
                             "reason": "classifier_not_integrated",
@@ -766,10 +897,11 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
             "session_summary_stored",
             extra={
                 "memory_id": memory_id,
+                "chunk_count": len(points_to_upsert),
                 "session_id": summary_data["session_id"],
                 "group_id": summary_data["group_id"],
                 "source_hook": "PreCompact",
-                "embedding_status": "pending",
+                "embedding_status": embedding_status,
             },
         )
 

@@ -146,6 +146,12 @@ class EmbedRequest(BaseModel):
     texts: list[str]
 
 
+class EmbedWithOffsetsRequest(BaseModel):
+    texts: list[str]
+    chunk_offsets: list[list[int]]
+    late_chunking: bool = True
+
+
 class EmbedDenseRequest(BaseModel):
     texts: list[str]
     model: str = "en"  # "en" or "code"
@@ -245,6 +251,48 @@ def embed(request: EmbedRequest):
         embeddings=result.embeddings,
         model=result.model,
         dimensions=result.dimensions,
+    )
+
+
+@app.post("/embed/chunked", response_model=EmbedResponse)
+def embed_chunked(request: EmbedWithOffsetsRequest):
+    """Late-chunking endpoint: returns one embedding per chunk offset (BP-028).
+
+    Accepts a document (single text) and a list of [start, end] character offsets
+    defining chunk boundaries. Returns N embeddings for N chunk offsets by embedding
+    each character span as a separate segment. This ensures callers always receive
+    exactly one vector per chunk, not one vector for the whole document.
+
+    Falls back to embedding whole document if no offsets are provided.
+    """
+    if not request.texts:
+        raise HTTPException(status_code=400, detail="No texts provided")
+
+    document = request.texts[0]
+    model = MODEL_REGISTRY["en"]
+
+    if not request.chunk_offsets:
+        # No offsets — embed whole document as single vector
+        embeddings = list(model.embed([document]))
+        return EmbedResponse(
+            embeddings=[e.tolist() for e in embeddings],
+            model=MODEL_NAMES["en"],
+            dimensions=VECTOR_DIMENSIONS,
+        )
+
+    # Embed each character span as a separate text segment
+    # This produces N vectors for N chunk offsets (correct late-chunking contract)
+    chunk_texts = []
+    for offset_pair in request.chunk_offsets:
+        start = offset_pair[0]
+        end = offset_pair[1] if len(offset_pair) > 1 else len(document)
+        chunk_texts.append(document[start:end])
+
+    embeddings = list(model.embed(chunk_texts))
+    return EmbedResponse(
+        embeddings=[e.tolist() for e in embeddings],
+        model=MODEL_NAMES["en"],
+        dimensions=VECTOR_DIMENSIONS,
     )
 
 

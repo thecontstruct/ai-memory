@@ -392,6 +392,21 @@ def inject_with_priority(
     return "\n".join(result)
 
 
+def _detect_agent_id() -> str:
+    """Detect agent ID from environment variables.
+
+    Detection chain: PARZIVAL_AGENT_ID > AI_MEMORY_AGENT_ID > BMAD_AGENT_NAME > "default"
+    Used for agent-scoped memory retrieval on compact (PLAN-015 §4.1).
+    """
+    _raw = (
+        os.environ.get("PARZIVAL_AGENT_ID")
+        or os.environ.get("AI_MEMORY_AGENT_ID")
+        or os.environ.get("BMAD_AGENT_NAME")
+        or "default"
+    )
+    return _raw.strip() or "default"
+
+
 def retrieve_session_summaries(
     client, project_name: str, limit: int = 20
 ) -> list[dict]:
@@ -808,9 +823,9 @@ def main():
 
             if trigger == "clear":
                 # User wants fresh start — delete injection state and skip injection
-                from pathlib import Path
+                from memory.injection import InjectionSessionState
 
-                state_path = Path(f"/tmp/ai-memory-{session_id}-injection-state.json")
+                state_path = InjectionSessionState._state_path(session_id)
                 state_path.unlink(missing_ok=True)
 
                 duration_ms = (time.perf_counter() - start_time) * 1000
@@ -994,19 +1009,48 @@ def main():
                 except Exception:
                     _parzival_constraints_context = ""
 
+                # Clear injected point dedup state after compact
+                try:
+                    from memory.injection import InjectionSessionState
+
+                    _parz_compact_state = InjectionSessionState.load(session_id)
+                    _parz_compact_state.reset_after_compact()
+                    _parz_compact_state.save()
+                except Exception:
+                    pass  # Non-fatal: dedup state clearing is best-effort
+
             else:
-                # NON-PARZIVAL PATH: Rich session summary ONLY (DEC-055)
+                # NON-PARZIVAL PATH: Agent-scoped compact restore (PLAN-015 §4.1, DEC-055)
+                from memory.injection import InjectionSessionState
                 from memory.search import MemorySearch
+
+                # Detect agent identity for scoped retrieval
+                _compact_agent_id = _detect_agent_id()
+
+                # Load state to determine summary count (1st compact = 1, 2nd+ = 2)
+                _compact_state = InjectionSessionState.load(session_id)
+                _summary_limit = 1 if _compact_state.compact_count == 0 else 2
+
+                # Defensive initialization — ensures variables are always defined
+                # even if the try block fails partway through (Fix 4)
+                session_summaries = []
+                decisions = []
 
                 searcher = MemorySearch(config)
                 try:
                     _retrieval_start = time.perf_counter()
-                    session_summary_results = searcher.get_recent(
-                        collection=COLLECTION_DISCUSSIONS,
-                        group_id=project_name,
-                        memory_type=["session"],
-                        limit=1,
-                    )
+
+                    # Build get_recent kwargs — add agent_id filter for named agents
+                    _summary_kwargs: dict = {
+                        "collection": COLLECTION_DISCUSSIONS,
+                        "group_id": project_name,
+                        "memory_type": ["session"],
+                        "limit": _summary_limit,
+                    }
+                    if _compact_agent_id not in ("default", "parzival"):
+                        _summary_kwargs["agent_id"] = _compact_agent_id
+
+                    session_summary_results = searcher.get_recent(**_summary_kwargs)
                     session_summaries = []
                     for r in session_summary_results:
                         session_summaries.append({
@@ -1018,25 +1062,55 @@ def main():
                             "last_agent_responses": r.get("last_agent_responses", []),
                             "session_metadata": r.get("session_metadata", {}),
                         })
-                    # TD-228: Trace event for non-Parzival session summaries retrieval
+
+                    # Retrieve decisions (PLAN-015 §4.1 — non-Parzival gets max 3)
+                    _decision_kwargs: dict = {
+                        "collection": COLLECTION_DISCUSSIONS,
+                        "group_id": project_name,
+                        "memory_type": ["decision"],
+                        "limit": 3,
+                    }
+                    if _compact_agent_id not in ("default", "parzival"):
+                        _decision_kwargs["agent_id"] = _compact_agent_id
+
+                    try:
+                        _decision_results = searcher.get_recent(**_decision_kwargs)
+                        decisions = []
+                        for r in _decision_results:
+                            decisions.append({
+                                "content": r.get("content", ""),
+                                "timestamp": r.get("created_at", r.get("timestamp", "")),
+                                "type": r.get("type", "decision"),
+                                "score": r.get("score", 0.0),
+                            })
+                    except Exception as e:
+                        logger.warning(
+                            "compact_decisions_retrieval_failed",
+                            extra={"session_id": session_id, "error": str(e)},
+                        )
+                        decisions = []
+
+                    _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
+
+                    # TD-228 compatible trace event
                     if emit_trace_event:
                         try:
-                            _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
                             emit_trace_event(
                                 event_type="memory_retrieval_session_summaries",
                                 data={
-                                    "input": f"get_recent(discussions, type=session, limit=1) for {project_name}",
-                                    "output": f"Retrieved {len(session_summaries)} session summaries (DEC-055: compact summary only)",
+                                    "input": f"compact restore for agent={_compact_agent_id}, limit={_summary_limit}",
+                                    "output": f"Retrieved {len(session_summaries)} summaries, {len(decisions)} decisions",
                                     "metadata": {
                                         "trigger": trigger,
                                         "collection": COLLECTION_DISCUSSIONS,
-                                        "memory_type": "session",
                                         "method": "get_recent",
+                                        "agent_id": _compact_agent_id,
+                                        "compact_count": _compact_state.compact_count,
+                                        "summary_limit": _summary_limit,
                                         "result_count": len(session_summaries),
+                                        "decisions_count": len(decisions),
                                         "retrieval_ms": round(_retrieval_ms, 2),
                                         "parzival_enabled": False,
-                                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                                     },
                                 },
                                 session_id=session_id,
@@ -1047,16 +1121,21 @@ def main():
                             pass
                 except Exception as e:
                     logger.warning(
-                        "non_parzival_session_summaries_retrieval_failed",
+                        "compact_session_summaries_retrieval_failed",
                         extra={"session_id": session_id, "error": str(e)},
                     )
                     session_summaries = []
+                    decisions = []
                 finally:
                     searcher.close()
 
-                other_memories = []
+                # Update compact state — increment compact_count, clear injected IDs
+                _compact_state.reset_after_compact()
+                _compact_state.save()
+
+                other_memories = decisions
                 memories_per_collection = {
-                    COLLECTION_DISCUSSIONS: 0,
+                    COLLECTION_DISCUSSIONS: len(decisions),
                     COLLECTION_CODE_PATTERNS: 0,
                     COLLECTION_CONVENTIONS: 0,
                 }

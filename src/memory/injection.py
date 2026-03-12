@@ -123,6 +123,8 @@ class InjectionSessionState:
     topic_drift: float = 0.5
     turn_count: int = 0
     total_tokens_injected: int = 0
+    error_state: dict | None = field(default=None)
+    compact_count: int = 0
 
     @classmethod
     def load(cls, session_id: str) -> "InjectionSessionState":
@@ -160,10 +162,13 @@ class InjectionSessionState:
         """Reset injected IDs after compaction (context window cleared).
 
         Called when SessionStart fires with trigger=compact.
-        Previous injections are no longer in Claude's context window.
-        Keep last_query_embedding and topic_drift (conversation continues).
+        - CLEARS: injected_point_ids (context window is gone)
+        - PRESERVES: last_query_embedding, topic_drift, error_state (conversation continues)
+        - INCREMENTS: compact_count (tracks which compact in this session)
+        - UNCHANGED: turn_count, total_tokens_injected (accumulate across compacts per spec)
         """
         self.injected_point_ids = []
+        self.compact_count += 1
 
     @staticmethod
     def _state_path(session_id: str) -> Path:

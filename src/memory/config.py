@@ -146,7 +146,7 @@ class MemoryConfig(BaseSettings):
     )
 
     max_retrievals: int = Field(
-        default=5, ge=1, le=50, description="Maximum memories to retrieve per session"
+        default=10, ge=1, le=50, description="Maximum memories to retrieve per session"
     )
 
     # Token budget increased from 2000 to 4000 per BP-039 Section 3:
@@ -430,8 +430,40 @@ class MemoryConfig(BaseSettings):
 
     # Tier 3 — hidden/advanced (not in .env.example uncommented)
     decay_type_overrides: str = Field(
-        default="github_ci_result:7,agent_task:14,github_code_blob:14,github_commit:14,github_issue:30,github_pr:30,jira_issue:30,agent_memory:30,guideline:60,rule:60,agent_handoff:180,agent_insight:180",
+        default="github_ci_result:7,agent_task:14,github_code_blob:14,github_commit:14,github_issue:30,github_pr:30,jira_issue:30,agent_memory:30,guideline:60,rule:60,agent_handoff:180,agent_insight:180,architecture_decision:90",
         description="Per-type half-life overrides. Format: type:days,type:days,...",
+    )
+
+    # =========================================================================
+    # v2.2.2 — Injection Gating (PLAN-015 §7.2)
+    # =========================================================================
+
+    injection_hard_floor: float = Field(
+        default=0.45,
+        ge=0.0,
+        le=1.0,
+        description="Hard floor for injection gating — results below this score are always blocked regardless of collection threshold (PLAN-015 §7.2)",
+    )
+
+    injection_threshold_conventions: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold for conventions collection injection (PLAN-015 §7.2)",
+    )
+
+    injection_threshold_code_patterns: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold for code-patterns collection injection (PLAN-015 §7.2)",
+    )
+
+    injection_threshold_discussions: float = Field(
+        default=0.60,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold for discussions collection injection (PLAN-015 §7.2)",
     )
 
     # =========================================================================
@@ -630,6 +662,52 @@ class MemoryConfig(BaseSettings):
             "classifying as 'expired' (even if blob hash matches). "
             "Default: 25."
         ),
+    )
+
+    # =========================================================================
+    # v2.2.2 — Freshness Score Penalties (PLAN-015 §4.5)
+    # =========================================================================
+
+    freshness_penalty_fresh: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Score multiplier for FRESH code patterns (no penalty)",
+    )
+
+    freshness_penalty_aging: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description="Score multiplier for AGING code patterns (minor penalty)",
+    )
+
+    freshness_penalty_stale: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Score multiplier for STALE code patterns (blocked from injection)",
+    )
+
+    freshness_penalty_expired: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Score multiplier for EXPIRED code patterns (blocked from injection)",
+    )
+
+    freshness_penalty_unverified: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Score multiplier for UNVERIFIED code patterns (initial status, no penalty until scanned)",
+    )
+
+    freshness_penalty_unknown: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Score multiplier for UNKNOWN freshness status (scanned but no ground truth found)",
     )
 
     # =========================================================================
@@ -875,6 +953,26 @@ class MemoryConfig(BaseSettings):
             type_name, days = pair.strip().split(":")
             result[type_name.strip()] = int(days.strip())
         return result
+
+    def get_freshness_penalty(self, freshness_status: str) -> float:
+        """Get score multiplier for a freshness status value.
+
+        Args:
+            freshness_status: Lowercase freshness status string.
+
+        Returns:
+            Float multiplier 0.0-1.0. Unknown status returns freshness_penalty_unknown (default: 0.8).
+        """
+        status = freshness_status.lower() if freshness_status else "unknown"
+        penalties = {
+            "fresh": self.freshness_penalty_fresh,
+            "aging": self.freshness_penalty_aging,
+            "stale": self.freshness_penalty_stale,
+            "expired": self.freshness_penalty_expired,
+            "unverified": self.freshness_penalty_unverified,
+            "unknown": self.freshness_penalty_unknown,
+        }
+        return penalties.get(status, self.freshness_penalty_unknown)
 
 
 # Agent configuration - SINGLE SOURCE OF TRUTH (CR-4.27)

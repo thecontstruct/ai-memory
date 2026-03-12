@@ -15,6 +15,9 @@ from .base import CHARS_PER_TOKEN, ChunkMetadata, ChunkResult, ContentType
 # Import ProseChunker (TECH-DEBT-053)
 from .prose_chunker import ProseChunker, ProseChunkerConfig
 
+# Import count_tokens for min_chunk_tokens filtering (PLAN-015 WP-4)
+from .truncation import count_tokens
+
 logger = logging.getLogger("ai_memory.chunking")
 
 
@@ -64,12 +67,22 @@ class IntelligentChunker:
         ".cfg",
     }
 
-    def __init__(self, max_chunk_tokens: int = 512, overlap_pct: float = 0.15):
+    def __init__(
+        self,
+        max_chunk_tokens: int = 1024,
+        overlap_pct: float = 0.15,
+        min_chunk_tokens: int = 50,
+    ):
         """Initialize chunker with configuration.
 
         Args:
-            max_chunk_tokens: Maximum tokens per chunk (must be > 0, default: 512)
+            max_chunk_tokens: Maximum tokens per chunk (must be > 0, default: 1024).
+                Code content benefits from larger chunks (1024) to capture full
+                function bodies. Prose uses ProseChunker with its own 512-token limit.
             overlap_pct: Overlap percentage between chunks (must be 0.0-1.0, default: 0.15)
+            min_chunk_tokens: Minimum tokens per chunk; chunks below this threshold are
+                filtered out after chunking (must be >= 0, default: 50).
+                Set to 0 to disable filtering entirely.
 
         Raises:
             ValueError: If parameters are out of valid range
@@ -78,14 +91,21 @@ class IntelligentChunker:
             raise ValueError(f"max_chunk_tokens must be > 0, got {max_chunk_tokens}")
         if not (0.0 <= overlap_pct <= 1.0):
             raise ValueError(f"overlap_pct must be 0.0-1.0, got {overlap_pct}")
+        if min_chunk_tokens < 0:
+            raise ValueError(
+                f"min_chunk_tokens must be >= 0, got {min_chunk_tokens}"
+            )
 
         self.max_chunk_tokens = max_chunk_tokens
         self.overlap_pct = overlap_pct
+        self.min_chunk_tokens = min_chunk_tokens
 
         # Initialize ProseChunker with BP-039 params (BUG-049 fix)
         # 512 tokens * 4 chars/token = 2048 chars max_chunk_size
+        # NOTE: ProseChunker always uses 512 tokens regardless of max_chunk_tokens
+        # (max_chunk_tokens is for ASTChunker/code content only)
         prose_config = ProseChunkerConfig(
-            max_chunk_size=max_chunk_tokens * CHARS_PER_TOKEN,
+            max_chunk_size=512 * CHARS_PER_TOKEN,
             overlap_ratio=overlap_pct,
         )
         self._prose_chunker = ProseChunker(prose_config)
@@ -167,6 +187,30 @@ class IntelligentChunker:
             )
             return ContentType.UNKNOWN
 
+    def _filter_trivial_chunks(self, chunks: list[ChunkResult]) -> list[ChunkResult]:
+        """Filter out chunks below min_chunk_tokens threshold (PLAN-015 WP-4).
+
+        Args:
+            chunks: List of ChunkResult objects to filter.
+
+        Returns:
+            Filtered list with only chunks meeting the min_chunk_tokens threshold.
+            Returns input unchanged if min_chunk_tokens is 0 (filtering disabled).
+        """
+        if self.min_chunk_tokens > 0:
+            original_count = len(chunks)
+            chunks = [c for c in chunks if count_tokens(c.content) >= self.min_chunk_tokens]
+            if len(chunks) < original_count:
+                logger.debug(
+                    "chunker_filtered_trivial_chunks",
+                    extra={
+                        "original_count": original_count,
+                        "filtered_count": len(chunks),
+                        "min_chunk_tokens": self.min_chunk_tokens,
+                    },
+                )
+        return chunks
+
     def chunk(
         self, content: str, file_path: str, content_type: ContentType | None = None
     ) -> list[ChunkResult]:
@@ -225,7 +269,9 @@ class IntelligentChunker:
                     overlap_tokens=0,
                     source_file=file_path,
                 )
-                return [ChunkResult(content=content, metadata=metadata)]
+                return self._filter_trivial_chunks(
+                    [ChunkResult(content=content, metadata=metadata)]
+                )
             else:
                 # Over threshold — topical chunking with ProseChunker
                 logger.info(
@@ -244,7 +290,7 @@ class IntelligentChunker:
                         push_chunking_metrics_async(
                             "topical", content_type.value, len(chunks), duration
                         )
-                    return chunks
+                    return self._filter_trivial_chunks(chunks)
                 # Fallback to whole if ProseChunker returns empty
                 logger.warning(
                     "prose_chunker_empty_for_message",
@@ -265,7 +311,7 @@ class IntelligentChunker:
                     push_chunking_metrics_async(
                         "semantic", "guideline", len(chunks), duration
                     )
-                return chunks
+                return self._filter_trivial_chunks(chunks)
 
         # Route to appropriate chunker
         if content_type == ContentType.CODE and self._ast_chunker:
@@ -280,7 +326,7 @@ class IntelligentChunker:
                 if push_chunking_metrics_async:
                     duration = time.time() - chunk_start_time
                     push_chunking_metrics_async("ast", "unknown", len(chunks), duration)
-                return chunks
+                return self._filter_trivial_chunks(chunks)
 
             # Otherwise fall through to whole-content fallback
             # FIX-8: Enhanced fallback logging with reason
@@ -316,7 +362,7 @@ class IntelligentChunker:
                     push_chunking_metrics_async(
                         "prose", "unknown", len(chunks), duration
                     )
-                return chunks
+                return self._filter_trivial_chunks(chunks)
 
             # Fallback if prose chunker returned empty (shouldn't happen)
             logger.warning(
@@ -344,7 +390,9 @@ class IntelligentChunker:
             )
             push_chunking_metrics_async(chunk_type_label, "unknown", 1, duration)
 
-        return [ChunkResult(content=content, metadata=metadata)]
+        return self._filter_trivial_chunks(
+            [ChunkResult(content=content, metadata=metadata)]
+        )
 
     def estimate_tokens(self, text: str) -> int:
         """Estimate token count using CHARS_PER_TOKEN constant.

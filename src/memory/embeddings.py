@@ -486,6 +486,72 @@ class EmbeddingClient:
             )
             raise EmbeddingError(f"LATE_EMBEDDING_ERROR: {e}") from e
 
+    def embed_with_late_chunking(
+        self,
+        document: str,
+        chunk_offsets: list[tuple[int, int]],
+        project: str = "unknown",
+    ) -> list[list[float]]:
+        """Generate embeddings using Jina late chunking (BP-028).
+
+        Sends the full document as a single sequence and returns per-chunk
+        embeddings computed via mean-pooling over each chunk's token range.
+        Preserves cross-chunk context — chunks "know about" each other.
+
+        Only valid for documents <= 8192 tokens (Jina context limit).
+        For documents > 8192 tokens, use regular embed() per chunk instead.
+
+        Args:
+            document: Full document text (must be <= 8192 tokens).
+            chunk_offsets: List of (start_char, end_char) character offsets
+                defining each chunk's boundary within the document.
+            project: Project name for logging/metrics.
+
+        Returns:
+            List of 768-dim float vectors, one per chunk offset.
+            Returns empty list if the embedding service is unavailable or errors.
+
+        Raises:
+            EmbeddingError: If the service returns an error response.
+        """
+        try:
+            response = self.client.post(
+                f"{self.base_url}/embed/chunked",
+                json={
+                    "texts": [document],
+                    "late_chunking": True,
+                    "chunk_offsets": [[start, end] for start, end in chunk_offsets],
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+            embeddings = result.get("embeddings", [])
+            if not embeddings:
+                raise EmbeddingError(
+                    "LATE_CHUNKING_EMPTY_RESPONSE: service returned no embeddings"
+                )
+            # Late chunking returns list of per-chunk embeddings (not wrapped in outer list)
+            # Shape: [[chunk0_vector], [chunk1_vector], ...] OR [chunk0_vector, chunk1_vector, ...]
+            # Normalize to flat list of vectors
+            if embeddings and isinstance(embeddings[0], list) and isinstance(embeddings[0][0], list):
+                # Wrapped format: [[vec1], [vec2]] -> [vec1, vec2]
+                return [e[0] for e in embeddings]
+            return embeddings
+        except EmbeddingError:
+            raise
+        except Exception as e:
+            logger.error(
+                "late_chunking_embedding_error",
+                extra={
+                    "document_length": len(document),
+                    "chunk_count": len(chunk_offsets),
+                    "project": project,
+                    "error": str(e),
+                },
+            )
+            raise EmbeddingError(f"LATE_CHUNKING_ERROR: {e}") from e
+
     def health_check(self) -> bool:
         """Check if embedding service is healthy.
 

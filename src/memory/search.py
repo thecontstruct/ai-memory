@@ -736,6 +736,75 @@ class MemorySearch:
             },
         )
 
+        # Remembrance Protection: increment access_count for retrieved points (PLAN-015 §5.3)
+        # Only on search() — get_recent() is deterministic, no decay applied
+        try:
+            _point_updates: dict[str, list[str]] = {}  # collection -> [point_ids]
+            for _mem in memories:
+                _coll = _mem.get("collection", collection)
+                _pid = _mem.get("id")
+                if _pid is not None and _coll:
+                    _point_updates.setdefault(_coll, []).append(str(_pid))
+
+            for _coll, _pids in _point_updates.items():
+                # H6: Batch retrieve — one call per collection instead of one per point
+                # NOTE: Retrieve-then-set is not atomic. Concurrent search() calls can
+                # undercount access_count (known trade-off — Qdrant has no atomic increment).
+                # Impact: remembrance protection threshold may activate one access late.
+                try:
+                    _unique_pids = list(dict.fromkeys(_pids))  # deduplicate, preserve order
+                    _retrieved_points = self.client.retrieve(
+                        collection_name=_coll,
+                        ids=_unique_pids,
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                    # Build lookup: point_id -> current access_count (L2: guard payload None)
+                    _count_map: dict[str, int] = {
+                        str(point.id): int((point.payload or {}).get("access_count") or 0)
+                        for point in _retrieved_points
+                    }
+                except Exception:
+                    _unique_pids = list(dict.fromkeys(_pids))
+                    _count_map = {}
+
+                for _pid in _unique_pids:
+                    try:
+                        _current_count = _count_map.get(_pid, 0)
+                        _new_count = _current_count + 1
+                        self.client.set_payload(
+                            collection_name=_coll,
+                            payload={"access_count": _new_count},
+                            points=[_pid],
+                        )
+                        # M1: emit only on transition from 2 to 3 (not on every access >= 3)
+                        if _new_count == 3 and emit_trace_event:
+                            with contextlib.suppress(Exception):
+                                emit_trace_event(
+                                    event_type="remembrance_protection",
+                                    data={
+                                        "input": f"access_count reached {_new_count} for point {_pid}"[
+                                            :TRACE_CONTENT_MAX
+                                        ],
+                                        "output": "temporal_score override active (access_count >= 3)"[
+                                            :TRACE_CONTENT_MAX
+                                        ],
+                                        "metadata": {
+                                            "point_id": _pid,
+                                            "collection": _coll,
+                                            "access_count": _new_count,
+                                            "temporal_score_override": 1.0,
+                                        },
+                                    },
+                                    session_id=os.environ.get("CLAUDE_SESSION_ID"),
+                                    tags=["remembrance_protection", _coll],
+                                    project_id=group_id,
+                                )
+                    except Exception:
+                        pass  # Never block results for access_count update failures
+        except Exception:
+            pass  # Remembrance protection failure must never affect search results
+
         return memories
 
     def _build_hybrid_prefetch(
@@ -1085,6 +1154,7 @@ class MemorySearch:
             },
         )
 
+        # Remembrance Protection: access_count NOT incremented for get_recent() — deterministic, no decay
         return memories
 
     def search_both_collections(
