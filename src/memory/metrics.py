@@ -146,6 +146,37 @@ trigger_results_returned = Histogram(
 )
 
 # ==============================================================================
+# FRESHNESS (V2.2.2 - WP-2, Behavior Spec §8.4)
+# ==============================================================================
+
+freshness_status = Gauge(
+    "ai_memory_freshness_status",
+    "Current count of memories by freshness tier",
+    ["status", "project"],
+    # status: fresh, aging, stale, expired, unknown
+)
+
+freshness_total = Counter(
+    "ai_memory_freshness_total",
+    "Cumulative freshness scan results for trend analysis",
+    ["status", "project"],
+    # status: fresh, aging, stale, expired, unknown
+)
+
+freshness_blocked_injections_total = Counter(
+    "ai_memory_freshness_blocked_injections_total",
+    "Total injections blocked by freshness gating",
+    ["project"],
+)
+
+freshness_scan_duration_seconds = Histogram(
+    "ai_memory_freshness_scan_duration_seconds",
+    "Freshness scan duration in seconds",
+    ["project"],
+    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0],
+)
+
+# ==============================================================================
 # GAUGES - Point-in-time values (can go up or down)
 # ==============================================================================
 
@@ -261,7 +292,7 @@ system_info.info(
         "version": _VERSION,
         "embedding_model": "jina-embeddings-v2-base-en",
         "vector_dimensions": "768",
-        "collections": "code-patterns,conventions,discussions,jira-data",
+        "collections": "code-patterns,conventions,discussions,github,jira-data",
     }
 )
 

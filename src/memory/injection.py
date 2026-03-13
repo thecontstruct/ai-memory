@@ -125,6 +125,11 @@ class InjectionSessionState:
     total_tokens_injected: int = 0
     error_state: dict | None = field(default=None)
     compact_count: int = 0
+    # H-3: Cross-turn access_count dedup — tracks which point IDs had access_count
+    # incremented this turn. Cleared when turn_count advances. Prevents double-counting
+    # when multiple search() calls in the same turn return overlapping results.
+    access_count_incremented_this_turn: list[str] = field(default_factory=list)
+    _last_turn_count: int = 0  # Internal: tracks turn_count for dedup set clearing
 
     @classmethod
     def load(cls, session_id: str) -> "InjectionSessionState":

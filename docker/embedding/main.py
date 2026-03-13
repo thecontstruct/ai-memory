@@ -44,11 +44,10 @@ except ImportError:
 
 # Model configuration with backward-compatible fallback chain (SPEC-010 Section 3.2)
 MODEL_NAMES = {
-    "en": os.getenv("MODEL_NAME_EN",
-                    os.getenv("MODEL_NAME",
-                              "jinaai/jina-embeddings-v2-base-en")),
-    "code": os.getenv("MODEL_NAME_CODE",
-                      "jinaai/jina-embeddings-v2-base-code"),
+    "en": os.getenv(
+        "MODEL_NAME_EN", os.getenv("MODEL_NAME", "jinaai/jina-embeddings-v2-base-en")
+    ),
+    "code": os.getenv("MODEL_NAME_CODE", "jinaai/jina-embeddings-v2-base-code"),
 }
 
 VECTOR_DIMENSIONS = int(os.getenv("VECTOR_DIMENSIONS", "768"))
@@ -76,6 +75,7 @@ app.mount("/metrics", metrics_app)
 MODEL_REGISTRY: dict[str, TextEmbedding] = {}
 models_ready_time: float = 0.0
 
+
 def load_models():
     """Load both embedding models at startup with graceful fallback.
 
@@ -90,7 +90,14 @@ def load_models():
     start_load = time.time()
     MODEL_REGISTRY["en"] = TextEmbedding(en_name)
     load_duration = time.time() - start_load
-    logger.info("model_loaded", extra={"model": en_name, "key": "en", "load_time_seconds": round(load_duration, 2)})
+    logger.info(
+        "model_loaded",
+        extra={
+            "model": en_name,
+            "key": "en",
+            "load_time_seconds": round(load_duration, 2),
+        },
+    )
 
     # Load optional 'code' model with fallback to 'en'
     code_name = MODEL_NAMES["code"]
@@ -99,7 +106,14 @@ def load_models():
         start_load = time.time()
         MODEL_REGISTRY["code"] = TextEmbedding(code_name)
         load_duration = time.time() - start_load
-        logger.info("model_loaded", extra={"model": code_name, "key": "code", "load_time_seconds": round(load_duration, 2)})
+        logger.info(
+            "model_loaded",
+            extra={
+                "model": code_name,
+                "key": "code",
+                "load_time_seconds": round(load_duration, 2),
+            },
+        )
     except Exception as e:
         logger.warning(
             "model_load_fallback",
@@ -114,6 +128,7 @@ def load_models():
 
     models_ready_time = time.time()
 
+
 load_models()  # Called at module init
 
 # Sparse and late interaction model registries (T-017/T-018)
@@ -126,13 +141,31 @@ def load_sparse_models():
     logger.info("model_loading", extra={"model": "Qdrant/bm25", "key": "bm25"})
     start = time.time()
     SPARSE_REGISTRY["bm25"] = SparseTextEmbedding("Qdrant/bm25")
-    logger.info("model_loaded", extra={"model": "Qdrant/bm25", "key": "bm25", "load_time_seconds": round(time.time() - start, 2)})
+    logger.info(
+        "model_loaded",
+        extra={
+            "model": "Qdrant/bm25",
+            "key": "bm25",
+            "load_time_seconds": round(time.time() - start, 2),
+        },
+    )
 
     if os.getenv("COLBERT_ENABLED", "false").lower() == "true":
-        logger.info("model_loading", extra={"model": "colbert-ir/colbertv2.0", "key": "colbert"})
+        logger.info(
+            "model_loading", extra={"model": "colbert-ir/colbertv2.0", "key": "colbert"}
+        )
         start = time.time()
-        LATE_REGISTRY["colbert"] = LateInteractionTextEmbedding("colbert-ir/colbertv2.0")
-        logger.info("model_loaded", extra={"model": "colbert-ir/colbertv2.0", "key": "colbert", "load_time_seconds": round(time.time() - start, 2)})
+        LATE_REGISTRY["colbert"] = LateInteractionTextEmbedding(
+            "colbert-ir/colbertv2.0"
+        )
+        logger.info(
+            "model_loaded",
+            extra={
+                "model": "colbert-ir/colbertv2.0",
+                "key": "colbert",
+                "load_time_seconds": round(time.time() - start, 2),
+            },
+        )
 
 
 try:
@@ -230,7 +263,7 @@ def embed_dense(request: EmbedDenseRequest) -> EmbedDenseResponse:
     if request.model not in MODEL_REGISTRY:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown model: {request.model}. Available: {list(MODEL_REGISTRY.keys())}"
+            detail=f"Unknown model: {request.model}. Available: {list(MODEL_REGISTRY.keys())}",
         )
 
     model = MODEL_REGISTRY[request.model]
@@ -256,12 +289,16 @@ def embed(request: EmbedRequest):
 
 @app.post("/embed/chunked", response_model=EmbedResponse)
 def embed_chunked(request: EmbedWithOffsetsRequest):
-    """Late-chunking endpoint: returns one embedding per chunk offset (BP-028).
+    """Chunked embedding endpoint: returns one embedding per chunk offset (BP-028).
 
     Accepts a document (single text) and a list of [start, end] character offsets
     defining chunk boundaries. Returns N embeddings for N chunk offsets by embedding
-    each character span as a separate segment. This ensures callers always receive
+    each character span as an independent segment. This ensures callers always receive
     exactly one vector per chunk, not one vector for the whole document.
+
+    Note: This is independent chunk embedding, not true late chunking. True late
+    chunking (single transformer pass with per-chunk mean pooling of token embeddings)
+    is deferred to v2.3.0. See TD-274.
 
     Falls back to embedding whole document if no offsets are provided.
     """
@@ -281,7 +318,7 @@ def embed_chunked(request: EmbedWithOffsetsRequest):
         )
 
     # Embed each character span as a separate text segment
-    # This produces N vectors for N chunk offsets (correct late-chunking contract)
+    # This produces N vectors for N chunk offsets (independent chunked embedding)
     chunk_texts = []
     for offset_pair in request.chunk_offsets:
         start = offset_pair[0]
@@ -306,7 +343,10 @@ def embed_sparse(request: EmbedSparseRequest):
     model = SPARSE_REGISTRY["bm25"]
     results = list(model.embed(request.texts))
     return EmbedSparseResponse(
-        embeddings=[SparseEmbeddingResult(indices=r.indices.tolist(), values=r.values.tolist()) for r in results],
+        embeddings=[
+            SparseEmbeddingResult(indices=r.indices.tolist(), values=r.values.tolist())
+            for r in results
+        ],
         model="Qdrant/bm25",
     )
 
@@ -317,7 +357,10 @@ def embed_late(request: EmbedLateRequest):
     if not request.texts:
         raise HTTPException(status_code=400, detail="No texts provided")
     if "colbert" not in LATE_REGISTRY:
-        raise HTTPException(status_code=503, detail="ColBERT model not loaded (set COLBERT_ENABLED=true)")
+        raise HTTPException(
+            status_code=503,
+            detail="ColBERT model not loaded (set COLBERT_ENABLED=true)",
+        )
     model = LATE_REGISTRY["colbert"]
     results = list(model.embed(request.texts))
     return EmbedLateResponse(

@@ -886,3 +886,40 @@ def standalone():
 """
         chunks = chunker.chunk(code, "test.py")
         assert "# No imports in this file" in chunks[0].content
+
+
+class TestOverlapDefaultMatchesSpec:
+    """M-8: Verify IntelligentChunker default overlap_pct matches spec §4 (15% prose)."""
+
+    def test_default_overlap_pct_is_015(self):
+        """Default overlap_pct must be 0.15 per spec §4 'Prose overlap 15%'."""
+        chunker = IntelligentChunker()
+        assert (
+            chunker.overlap_pct == 0.15
+        ), f"Default overlap_pct is {chunker.overlap_pct}, spec §4 requires 0.15"
+
+    def test_prose_chunker_receives_overlap(self):
+        """ProseChunker should receive the configured overlap_pct."""
+        chunker = IntelligentChunker(overlap_pct=0.20)
+        assert chunker._prose_chunker.config.overlap_ratio == 0.20
+
+
+class TestChunkedEmbeddingEndpoint:
+    """H-2: Basic test for /embed/chunked endpoint contract (chunked embedding)."""
+
+    def test_embed_with_late_chunking_method_exists(self):
+        """EmbeddingClient should have embed_with_late_chunking method."""
+        from src.memory.embeddings import EmbeddingClient
+
+        assert hasattr(EmbeddingClient, "embed_with_late_chunking")
+
+    def test_embed_with_late_chunking_signature(self):
+        """embed_with_late_chunking should accept document + chunk_offsets."""
+        import inspect
+
+        from src.memory.embeddings import EmbeddingClient
+
+        sig = inspect.signature(EmbeddingClient.embed_with_late_chunking)
+        params = list(sig.parameters.keys())
+        assert "document" in params
+        assert "chunk_offsets" in params

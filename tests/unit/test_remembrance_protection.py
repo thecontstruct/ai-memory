@@ -204,7 +204,7 @@ class TestMemorySearchAccessCountUpdate:
         # Verify set_payload was called with incremented count (1 → 2)
         call_kwargs = mock_client.set_payload.call_args
         assert call_kwargs is not None
-        payload_arg = call_kwargs[1].get("payload") or call_kwargs[0][1]
+        payload_arg = call_kwargs[1]["payload"]
         assert payload_arg["access_count"] == 2
 
     def test_search_returns_results_when_set_payload_raises(self):

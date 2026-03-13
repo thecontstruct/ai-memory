@@ -5,6 +5,59 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2] - 2026-03-13
+
+AI Memory System Optimization (PLAN-015): Unified behavior specification, per-collection confidence gating, freshness injection blocking, error-to-fix linkage, remembrance protection, and best practices auto-activation. 45+ files modified with 3 adversarial review cycles.
+
+### Added
+- **Per-collection confidence thresholds**: Tier 2 injection uses collection-specific thresholds (conventions: 0.65, code-patterns: 0.55, discussions: 0.60) instead of a single global threshold
+- **4-tier gating model**: HARD SKIP / SOFT SKIP / SOFT GATE / FULL — graduated injection based on confidence with hard floor at 0.45
+- **Freshness injection blocking**: STALE and EXPIRED code patterns blocked from injection with score penalty 0.0. Prometheus counter tracks blocked injections
+- **Error-to-fix linkage**: Errors and fixes linked via deterministic `error_group_id` (SHA-256). Two-phase retrieval finds similar errors then follows links to paired fixes. Resolution confidence scoring (0.3-0.9)
+- **Best practices auto-activation**: Retrieves relevant best practices when error detected in same file or 3+ edits to same file. Confidence gate at 0.6
+- **Remembrance protection**: Frequently-retrieved memories (access_count >= 3) exempt from temporal decay. Batch `set_payload` for efficient tracking
+- **Agent-scoped compact restore**: Named agents get their own cross-session memories filtered by `agent_id`. Parzival: 3 summaries + 5 decisions; other named agents: 2 + 3
+- **Chunked embedding for session summaries**: Session summaries use Jina mean-pooling endpoint for better retrieval precision (BP-028)
+- **Freshness metrics**: 4 Prometheus metrics (status gauge, scan counter, blocked injections counter, scan duration histogram)
+- **Unified Behavior Specification**: `AI-Memory-Behavior-Spec-V1.md` — single source of truth for all memory system behavior
+
+### Changed
+- **`max_retrievals` default**: Increased from 5 to 10 for broader recall
+- **Code chunk size**: Increased from 512 to 1024 tokens for better function body capture
+- **Minimum chunk filtering**: Chunks below 50 tokens filtered out (removes trivial one-liners)
+- **Prose overlap**: Corrected to 15% per spec (was inadvertently 20%)
+- **Cross-turn dedup**: `access_count` increments deduplicated within a turn to prevent inflation
+
+### Fixed
+- **Hook exit codes**: All hooks now exit 0 on failure per §1.2 Principle 4
+- **Metric name prefix**: `aim_freshness_blocked_injections_total` corrected to `ai_memory_freshness_blocked_injections_total`
+- **Missing `access_count` field**: Added to agent_response, user_prompt, and manual_save store payloads (§2.2)
+- **Dead code removal**: ~175 lines of unused functions removed from session_start.py
+- **Error pattern false positives**: Replaced substring matching with pattern matching for actual error indicators
+- **Tier 2 type filtering**: Discussions excludes user_message/error_pattern; code-patterns excludes error_pattern
+- **Terminology**: "late chunking" renamed to "chunked embedding" (TD-274 for true late chunking)
+- **Freshness field names**: Standardized to `checked_at`, `freshness_status` (lowercase), tags `["freshness"]`
+- **Langfuse V3 compliance**: Full audit confirmed zero V2 violations across 31 files
+
+### Deprecated
+- `Context-Injection-V2.md` — superseded by AI-Memory-Behavior-Spec-V1.md §4
+- `Core-Architecture-Principle-V2.md` §7.2/§15 — superseded by Behavior-Spec-V1 §4/§7
+- `Temporal-Awareness-V1.md` §3 — contradicts zero-truncation principle, superseded by Behavior-Spec-V1 §4.2.5
+- `Chunking-Strategy-V2.md` §2.1/§2.6 — clarified in Behavior-Spec-V1 §7.4
+- `GitHub-Integration-V1.md` — collection targeting superseded by Behavior-Spec-V1 §2.1
+
+### Upgrade Instructions
+
+1. **Update code and reinstall** (from your ai-memory clone):
+   ```bash
+   cd /path/to/your/ai-memory-clone
+   git pull origin main
+   ./scripts/install.sh /path/to/your-project
+   # Select Option 1 (Add project to existing installation)
+   ```
+
+   No migration required. All changes are Python-level (hooks, library, scripts). No Docker rebuild needed.
+
 ## [2.2.1] - 2026-03-10
 
 Triple Fusion Hybrid Search (PLAN-013): Dense vectors augmented with BM25 sparse vectors and optional ColBERT late interaction reranking via Qdrant's native RRF fusion. 4-path search composition with automatic fallback. RRF score normalization to [0.5, 0.95] range for compatibility with existing confidence thresholds.

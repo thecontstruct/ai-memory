@@ -6,8 +6,7 @@ AC 2.1.3: Hook Input Schema Validation
 AC 2.1.4: Performance Requirements (<500ms)
 
 Exit Codes:
-- 0: Success (normal completion)
-- 1: Non-blocking error (Claude continues, graceful degradation)
+- 0: Always (hooks must never block Claude — §1.2 Principle 4)
 
 Performance: Must complete in <500ms (NFR-P1)
 Pattern: Fork to background using subprocess.Popen + start_new_session=True
@@ -293,16 +292,11 @@ def detect_edit_write_fix(hook_input: dict[str, Any]) -> None:
                     matched_errors.append((eid, edata, True))  # same_file=True
 
             elif tool_name == "Write":
-                # Write creating missing file (FileNotFoundError) → fix
+                # §C4b: Write fix ONLY for FileNotFoundError (creating missing file)
                 if error_exception == "FileNotFoundError" and (
                     error_file == file_path
                     or Path(error_file).name == file_name
                     or file_path.endswith(error_file)
-                ):
-                    matched_errors.append((eid, edata, True))
-                # Also match if editing a file that was in error references
-                elif error_file and (
-                    error_file == file_path or Path(error_file).name == file_name
                 ):
                     matched_errors.append((eid, edata, True))
 
@@ -329,6 +323,8 @@ def detect_edit_write_fix(hook_input: dict[str, Any]) -> None:
                 confidence = 0.7
             elif not same_file and turn_diff <= 3:
                 confidence = 0.5
+            elif not same_file and turn_diff <= 10:
+                confidence = 0.4
             else:
                 confidence = 0.3
 
@@ -471,7 +467,7 @@ def main() -> int:
     Reads hook input from stdin, validates it, and forks to background.
 
     Returns:
-        Exit code: 0 (success) or 1 (non-blocking error)
+        Exit code: 0 always (§1.2 Principle 4: hooks never block Claude)
     """
     import contextlib
 
@@ -648,7 +644,7 @@ def main() -> int:
             )
 
             # HIGH-1 FIX: Context manager automatically calls __exit__() on exception
-            return 1  # Non-blocking error
+            return 0  # Hooks must always exit 0 (§1.2 Principle 4)
 
 
 if __name__ == "__main__":

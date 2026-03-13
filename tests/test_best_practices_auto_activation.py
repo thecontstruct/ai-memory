@@ -61,6 +61,24 @@ class TestFilePathsMatch:
         assert _file_paths_match("foo.py", "") is False
         assert _file_paths_match("", "foo.py") is False
 
+    # L-3: Tests for full path suffix comparison before basename fallback
+    def test_suffix_match_relative_trailing(self):
+        """Shorter relative path matches as trailing segment of absolute path."""
+        assert (
+            _file_paths_match("/project/src/utils/foo.py", "src/utils/foo.py") is True
+        )
+
+    def test_suffix_match_longer_relative(self):
+        """Multi-segment relative path matches trailing segments."""
+        assert _file_paths_match("utils/foo.py", "/project/src/utils/foo.py") is True
+
+    def test_basename_collision_different_dirs(self):
+        """Two files with same basename in different dirs — basename match (known limitation)."""
+        # This tests the current behavior: basename match still returns True
+        # because basename fallback is kept for robustness. The L-3 fix adds
+        # suffix matching as a HIGHER priority check, not replaces basename.
+        assert _file_paths_match("/a/utils.py", "/b/utils.py") is True
+
 
 class TestEditCountTracking:
     """Test edit count tracking per file per session."""
@@ -130,11 +148,21 @@ class TestCheckAutoActivation:
             state_path.unlink()
 
     def _set_error_state(self, error_file: str, error_group_id: str = "err-123"):
-        """Write injection session state with error_state set."""
+        """Write injection session state with error_state in WP-6 nested format.
+
+        C-1 FIX: error_pattern_capture.py stores nested dicts keyed by error_group_id:
+        {egid: {"error_group_id": egid, "file_path": path, ...}}
+        """
         from memory.injection import InjectionSessionState
 
         state = InjectionSessionState(session_id=self._session_id)
-        state.error_state = {"file": error_file, "error_group_id": error_group_id}
+        state.error_state = {
+            error_group_id: {
+                "error_group_id": error_group_id,
+                "file_path": error_file,
+                "exception_type": "TestError",
+            }
+        }
         state.save()
 
     def test_error_triggered_exact_match(self):
@@ -206,12 +234,53 @@ class TestCheckAutoActivation:
         result = _check_auto_activation("/src/foo.py", self._session_id, 1)
         assert result is None
 
-    def test_error_state_missing_file_key_no_trigger(self):
-        """error_state without 'file' key doesn't trigger."""
+    def test_error_state_missing_file_path_key_no_trigger(self):
+        """error_state entry without 'file_path' key doesn't trigger."""
         from memory.injection import InjectionSessionState
 
         state = InjectionSessionState(session_id=self._session_id)
-        state.error_state = {"error_group_id": "abc"}  # No 'file' key
+        state.error_state = {
+            "abc": {
+                "error_group_id": "abc",
+                # No 'file_path' key
+            }
+        }
+        state.save()
+        result = _check_auto_activation("/src/foo.py", self._session_id, 1)
+        assert result is None
+
+    def test_multiple_error_entries_matches_second(self):
+        """C-1: Multiple nested error entries — matches the second one."""
+        from memory.injection import InjectionSessionState
+
+        state = InjectionSessionState(session_id=self._session_id)
+        state.error_state = {
+            "egid-1": {
+                "error_group_id": "egid-1",
+                "file_path": "/src/bar.py",
+                "exception_type": "ImportError",
+            },
+            "egid-2": {
+                "error_group_id": "egid-2",
+                "file_path": "/src/foo.py",
+                "exception_type": "TypeError",
+            },
+        }
+        state.save()
+        result = _check_auto_activation("/src/foo.py", self._session_id, 1)
+        assert result == "error_triggered"
+
+    def test_internal_key_skipped(self):
+        """C-1: Internal keys like _last_fix_injected are skipped."""
+        from memory.injection import InjectionSessionState
+
+        state = InjectionSessionState(session_id=self._session_id)
+        state.error_state = {
+            "_last_fix_injected": {
+                "error_group_id": "egid-1",
+                "fix_point_id": "fp-1",
+            },
+        }
         state.save()
         result = _check_auto_activation("/src/foo.py", self._session_id, 1)
         assert result is None
@@ -267,7 +336,13 @@ class TestNoFalseTriggers:
         from memory.injection import InjectionSessionState
 
         state = InjectionSessionState(session_id=self._session_id)
-        state.error_state = {"file": "/src/database.py", "error_group_id": "db-err"}
+        state.error_state = {
+            "db-err": {
+                "error_group_id": "db-err",
+                "file_path": "/src/database.py",
+                "exception_type": "DBError",
+            }
+        }
         state.save()
         result = _check_auto_activation("/src/api.py", self._session_id, 1)
         assert result is None

@@ -11,14 +11,15 @@ Signal Detection:
 Action:
     - Extract error signature
     - Search code-patterns collection
-    - Filter by type in ("error_pattern", "error_fix") for backward compatibility with legacy records
-    - Inject up to 3 similar fixes to stdout
+    - Phase 1: Search type=error_pattern, subtype=error (similar errors)
+    - Phase 2: Follow error_group_id to retrieve linked fixes (subtype=fix)
+    - Inject up to 6 results (3 errors + up to 1 linked fix each)
 
 Configuration:
     - Hook: PostToolUse with matcher "Bash"
     - Collection: code-patterns
-    - Type filter: ["error_pattern", "error_fix"]
-    - Max results: 3
+    - Type filter: ["error_pattern"]
+    - Phase 1 limit: 3 errors, Phase 2: up to 1 fix per error
 
 Exit Codes:
     - 0: Success (or graceful degradation)
@@ -102,6 +103,10 @@ def detect_error(tool_response: dict) -> bool:
 
     # Error pattern check
     # FIX #2: Added "bug" pattern per spec (TRIGGER 1 line 1071)
+    # L-2: These patterns are intentionally BROADER than error_pattern_capture.py's
+    # capture regex. Detection casts a wide net to trigger retrieval; capture uses
+    # stricter patterns (Traceback + exception type) to avoid false positives in
+    # stored error memories. The asymmetry is by design.
     error_patterns = [
         r"(?i)\berror\b",
         r"(?i)\bexception\b",
@@ -169,15 +174,25 @@ def two_phase_retrieval(
     Returns:
         List of result dicts (errors + their linked fixes), max 6 (3 errors + 3 fixes)
     """
-    # Phase 1: Semantic match for similar errors
+    # Phase 1: Semantic match for similar errors (§4.3 R2)
+    # M-1/L-1 FIX: Use type=error_pattern only (not dead "error_fix").
+    # Post-filter by subtype="error" — Phase 2 follows links to find fixes.
     phase1_results = search.search(
         query=error_signature,
         collection=COLLECTION_CODE_PATTERNS,
         group_id=project_name,
         limit=3,
         score_threshold=0.5,
-        memory_type=["error_pattern", "error_fix"],
+        memory_type=["error_pattern"],
     )
+
+    # M-1 FIX: Filter Phase 1 to only error entries (subtype="error").
+    # Fixes that happened to match semantically are excluded — Phase 2
+    # retrieves linked fixes via error_group_id instead.
+    phase1_results = [
+        r for r in phase1_results
+        if r.get("subtype", "error") == "error"
+    ]
 
     if not phase1_results:
         return []
@@ -238,6 +253,10 @@ def two_phase_retrieval(
                                 FieldCondition(
                                     key="subtype",
                                     match=MatchValue(value="fix"),
+                                ),
+                                FieldCondition(
+                                    key="group_id",
+                                    match=MatchValue(value=project_name),
                                 ),
                             ]
                         ),

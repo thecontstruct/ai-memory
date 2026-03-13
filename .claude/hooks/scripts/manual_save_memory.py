@@ -19,6 +19,7 @@ Exit Codes:
 - Graceful degradation: queue to file on failure
 - Store to discussions collection
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -149,8 +150,12 @@ This session summary was manually saved by the user using /save-memory command.
         sparse_vector = None
         try:
             from memory.config import get_config as _get_config
+
             _cfg = _get_config()
-            if _cfg.hybrid_search_enabled and embedding_status == EmbeddingStatus.COMPLETE.value:
+            if (
+                _cfg.hybrid_search_enabled
+                and embedding_status == EmbeddingStatus.COMPLETE.value
+            ):
                 with EmbeddingClient(_cfg) as sparse_client:
                     sparse_results = sparse_client.embed_sparse([summary_content])
                     if sparse_results and sparse_results[0]:
@@ -171,6 +176,13 @@ This session summary was manually saved by the user using /save-memory command.
             "importance": "normal",
             "manual_save": True,
             "user_description": description,
+            "access_count": 0,
+            # v2.0.6: Semantic Decay fields
+            "decay_score": 1.0,
+            "freshness_status": "unverified",
+            "source_authority": 0.4,
+            "is_current": True,
+            "version": 1,
         }
 
         # Store to discussions collection
@@ -178,7 +190,9 @@ This session summary was manually saved by the user using /save-memory command.
         if sparse_vector is not None and SparseVector is not None:
             point_vector = {
                 "": vector,
-                "bm25": SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"]),
+                "bm25": SparseVector(
+                    indices=sparse_vector["indices"], values=sparse_vector["values"]
+                ),
             }
         else:
             point_vector = vector

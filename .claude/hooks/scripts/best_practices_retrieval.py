@@ -164,15 +164,22 @@ def _check_auto_activation(
         Trigger reason string if activated, None otherwise
     """
     # Trigger 1: Error-triggered — error_detection flagged same file
+    # C-1 FIX: error_state uses WP-6 nested format keyed by error_group_id:
+    # {egid: {"error_group_id": egid, "file_path": path, ...}, ...}
     if session_id and session_id != "unknown":
         try:
             from memory.injection import InjectionSessionState
 
             state = InjectionSessionState.load(session_id)
             if state.error_state and isinstance(state.error_state, dict):
-                error_file = state.error_state.get("file", "")
-                if error_file and _file_paths_match(file_path, error_file):
-                    return "error_triggered"
+                for _egid, entry in state.error_state.items():
+                    # Skip internal tracking keys (e.g. _last_fix_injected)
+                    if _egid.startswith("_"):
+                        continue
+                    if isinstance(entry, dict):
+                        error_file = entry.get("file_path", "")
+                        if error_file and _file_paths_match(file_path, error_file):
+                            return "error_triggered"
         except Exception:
             pass  # Graceful degradation
 
@@ -186,8 +193,11 @@ def _check_auto_activation(
 def _file_paths_match(path_a: str, path_b: str) -> bool:
     """Check if two file paths refer to the same file.
 
-    Handles exact match and basename match
+    Handles exact match, trailing path segment match, and basename match
     for robustness across absolute/relative path representations.
+
+    L-3 FIX: Full path suffix comparison before basename fallback to avoid
+    basename collisions (e.g. two different files named "utils.py").
 
     Args:
         path_a: First file path
@@ -200,6 +210,17 @@ def _file_paths_match(path_a: str, path_b: str) -> bool:
         return False
     if path_a == path_b:
         return True
+
+    # L-3: Full path suffix comparison — check if shorter path is a
+    # trailing segment of the longer path (e.g. "src/foo.py" matches
+    # "/project/src/foo.py") using segment-aware comparison
+    parts_a = Path(path_a).parts
+    parts_b = Path(path_b).parts
+    shorter, longer = (parts_a, parts_b) if len(parts_a) <= len(parts_b) else (parts_b, parts_a)
+    if len(shorter) > 0 and longer[-len(shorter):] == shorter:
+        return True
+
+    # Basename fallback — only if basenames match (segment-aware)
     basename_a = os.path.basename(path_a)
     basename_b = os.path.basename(path_b)
     if basename_a == basename_b and basename_a:

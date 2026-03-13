@@ -711,6 +711,7 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
         if not chunk_pairs:
             try:
                 from memory.config import get_config as _gfc
+
                 _embed_dim = _gfc().embedding_dimension
             except Exception:
                 _embed_dim = 768
@@ -773,7 +774,10 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
             from memory.config import get_config as _get_config
 
             _cfg = _get_config()
-            if _cfg.hybrid_search_enabled and embedding_status == EmbeddingStatus.COMPLETE.value:
+            if (
+                _cfg.hybrid_search_enabled
+                and embedding_status == EmbeddingStatus.COMPLETE.value
+            ):
                 with EmbeddingClient(_cfg) as sparse_client:
                     chunk_texts_for_sparse = [cp[0] for cp in chunk_pairs]
                     sparse_results = sparse_client.embed_sparse(chunk_texts_for_sparse)
@@ -825,15 +829,15 @@ def store_session_summary(summary_data: dict[str, Any]) -> bool:
             if sv is not None and SparseVector is not None:
                 point_vector = {
                     "": vector,
-                    "bm25": SparseVector(
-                        indices=sv["indices"], values=sv["values"]
-                    ),
+                    "bm25": SparseVector(indices=sv["indices"], values=sv["values"]),
                 }
             else:
                 point_vector = vector
 
             points_to_upsert.append(
-                PointStruct(id=chunk_memory_id, vector=point_vector, payload=chunk_payload)
+                PointStruct(
+                    id=chunk_memory_id, vector=point_vector, payload=chunk_payload
+                )
             )
 
         client = get_qdrant_client()

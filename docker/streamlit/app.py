@@ -100,7 +100,12 @@ else:
     # CRITICAL: These values MUST be kept in sync with src/memory/models.py:39-58
     # Last verified: 2026-01-25 (TECH-DEBT-068)
     COLLECTION_TYPES = {
-        "code-patterns": ["implementation", "error_pattern", "refactor", "file_pattern"],
+        "code-patterns": [
+            "implementation",
+            "error_pattern",
+            "refactor",
+            "file_pattern",
+        ],
         "conventions": ["rule", "guideline", "port", "naming", "structure"],
         "discussions": [
             "decision",

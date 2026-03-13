@@ -18,11 +18,9 @@ sys.path.insert(
 # Import actual V2 functions from session_start.py
 try:
     from session_start import (
-        get_conversation_context,
         inject_with_priority,
         log_empty_session,
         parse_hook_input,
-        retrieve_session_summaries,
     )
 
     # TD-167: estimate_tokens removed, replaced by count_tokens from memory.chunking.truncation
@@ -156,12 +154,6 @@ except ImportError:
         raise NotImplementedError("session_start.py not implemented yet")
 
     def inject_with_priority(session_summaries, other_memories, token_budget):
-        raise NotImplementedError("session_start.py not implemented yet")
-
-    def retrieve_session_summaries(client, project_name, limit=20):
-        raise NotImplementedError("session_start.py not implemented yet")
-
-    def get_conversation_context(config, session_id, project_name, limit=3):
         raise NotImplementedError("session_start.py not implemented yet")
 
     def log_empty_session(session_id, project, reason, query="", duration_ms=0.0):

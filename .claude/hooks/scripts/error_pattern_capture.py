@@ -13,8 +13,7 @@ Requirements:
 - Exit 0 immediately after forking
 
 Exit Codes:
-- 0: Success (normal completion)
-- 1: Non-blocking error (Claude continues, graceful degradation)
+- 0: Always (hooks must never block Claude — §1.2 Principle 4)
 
 Performance: Must complete in <500ms (NFR-P1)
 Pattern: Fork to background using subprocess.Popen + start_new_session=True
@@ -286,7 +285,7 @@ def _fork_fix_to_background(
                             "fix_source": fix_source,
                         },
                     },
-                    trace_id=uuid.uuid4().hex,
+                    trace_id=hashlib.md5(error_group_id.encode()).hexdigest()[:32],
                     session_id=session_id,
                     tags=["capture", "error-fix"],
                 )
@@ -661,7 +660,7 @@ def main() -> int:
     """PostToolUse hook entry point for error pattern capture.
 
     Returns:
-        Exit code: 0 (success) or 1 (non-blocking error)
+        Exit code: 0 always (§1.2 Principle 4: hooks never block Claude)
     """
     import contextlib
 
@@ -864,7 +863,7 @@ def main() -> int:
             )
 
             # HIGH-2 FIX: Context manager automatically calls __exit__() on exception
-            return 1  # Non-blocking error
+            return 0  # Hooks must always exit 0 (§1.2 Principle 4)
 
 
 if __name__ == "__main__":

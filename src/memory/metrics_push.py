@@ -1510,14 +1510,14 @@ def push_freshness_metrics_async(
                 "-c",
                 f"""
 import json, os
-from prometheus_client import CollectorRegistry, Gauge, Histogram, pushadd_to_gateway
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, pushadd_to_gateway
 
 data = json.loads({json.dumps(metrics_data)!r})
 registry = CollectorRegistry()
 
-# Freshness scan duration histogram
+# Freshness scan duration histogram (Spec §8.4)
 duration = Histogram(
-    "aimemory_freshness_scan_duration_seconds",
+    "ai_memory_freshness_scan_duration_seconds",
     "Freshness scan duration",
     ["project"],
     registry=registry,
@@ -1525,18 +1525,31 @@ duration = Histogram(
 )
 duration.labels(project=data["project"]).observe(data["duration_seconds"])
 
-# Freshness memories count gauge (by status)
-memories = Gauge(
-    "aimemory_freshness_memories_total",
+# Freshness status gauge — current snapshot per tier (Spec §8.4)
+status_gauge = Gauge(
+    "ai_memory_freshness_status",
     "Current count of memories by freshness tier",
     ["status", "project"],
     registry=registry
 )
-memories.labels(status="fresh", project=data["project"]).set(data["fresh"])
-memories.labels(status="aging", project=data["project"]).set(data["aging"])
-memories.labels(status="stale", project=data["project"]).set(data["stale"])
-memories.labels(status="expired", project=data["project"]).set(data["expired"])
-memories.labels(status="unknown", project=data["project"]).set(data["unknown"])
+status_gauge.labels(status="fresh", project=data["project"]).set(data["fresh"])
+status_gauge.labels(status="aging", project=data["project"]).set(data["aging"])
+status_gauge.labels(status="stale", project=data["project"]).set(data["stale"])
+status_gauge.labels(status="expired", project=data["project"]).set(data["expired"])
+status_gauge.labels(status="unknown", project=data["project"]).set(data["unknown"])
+
+# Freshness total counter — cumulative for trend analysis (Spec §8.4)
+total_counter = Counter(
+    "ai_memory_freshness_total",
+    "Cumulative freshness scan results for trend analysis",
+    ["status", "project"],
+    registry=registry
+)
+total_counter.labels(status="fresh", project=data["project"]).inc(data["fresh"])
+total_counter.labels(status="aging", project=data["project"]).inc(data["aging"])
+total_counter.labels(status="stale", project=data["project"]).inc(data["stale"])
+total_counter.labels(status="expired", project=data["project"]).inc(data["expired"])
+total_counter.labels(status="unknown", project=data["project"]).inc(data["unknown"])
 
 try:
     pushadd_to_gateway(
@@ -1597,7 +1610,7 @@ data = json.loads({json.dumps(metrics_data)!r})
 registry = CollectorRegistry()
 
 blocked = Counter(
-    "aimemory_freshness_blocked_injections_total",
+    "ai_memory_freshness_blocked_injections_total",
     "Total code-pattern results blocked from injection due to STALE/EXPIRED freshness status",
     ["project"],
     registry=registry

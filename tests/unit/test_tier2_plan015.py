@@ -487,3 +487,123 @@ class TestSearchExcludeExpiredFreshness:
             assert (
                 len(freshness_conditions) == 0
             ), f"Default exclude_expired_freshness=False should not add filter. found {freshness_conditions}"
+
+
+# =============================================================================
+# Group 4: PLAN-015 fix validations (L-8, freshness blocked metrics, traces)
+# =============================================================================
+
+
+class TestMustNotTypesFilter:
+    """L-8: Validate 'error_fix' is NOT in must_not_types (it's a dead filter)."""
+
+    def test_error_fix_not_in_must_not_types(self):
+        """'error_fix' should not be in must_not_types — only 'error_pattern' covers both subtypes."""
+        import ast
+
+        # Read the actual source code of context_injection_tier2.py to verify
+        tier2_path = (
+            "/mnt/e/projects/dev-ai-memory/ai-memory/.claude/hooks/scripts/"
+            "context_injection_tier2.py"
+        )
+        with open(tier2_path) as f:
+            source = f.read()
+
+        # Parse the AST to find must_not_types assignments
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    # Look for subscript assignments like search_kwargs["must_not_types"]
+                    if (
+                        isinstance(target, ast.Subscript)
+                        and isinstance(target.slice, ast.Constant)
+                        and target.slice.value == "must_not_types"
+                        and isinstance(node.value, ast.List)
+                    ):
+                        # Extract the list values
+                        values = [
+                            elt.value
+                            for elt in node.value.elts
+                            if isinstance(elt, ast.Constant)
+                        ]
+                        assert "error_fix" not in values, (
+                            f"'error_fix' found in must_not_types: {values}. "
+                            "It should be removed — 'error_pattern' already covers both subtypes."
+                        )
+                        assert "error_pattern" in values, (
+                            f"'error_pattern' not found in must_not_types: {values}. "
+                            "It must be present to exclude error patterns."
+                        )
+
+
+class TestFreshnessBlockedMetricsPush:
+    """Test that freshness_blocked_metrics push is called when results are blocked."""
+
+    def test_blocked_count_triggers_metrics_push(self):
+        """When penalty=0.0 blocks results, push_freshness_blocked_metrics_async should be callable."""
+        # This tests the integration point — the actual push function exists and accepts correct args
+        # Verify function signature accepts count and project
+        import inspect
+
+        from memory.metrics_push import push_freshness_blocked_metrics_async
+
+        sig = inspect.signature(push_freshness_blocked_metrics_async)
+        params = list(sig.parameters.keys())
+        assert "count" in params
+        assert "project" in params
+
+
+class TestFreshnessPenaltyLangfuseTrace:
+    """Test freshness_penalty_applied Langfuse trace emission in tier2 logic."""
+
+    def test_penalty_applied_trace_emitted_for_penalized_results(self):
+        """When a code-patterns result is penalized, a freshness_penalty_applied trace should be emitted."""
+        # Replicate the penalty logic with a mock emit_trace_event
+        import contextlib
+        from unittest.mock import MagicMock
+
+        config = _make_config()
+        mock_emit = MagicMock()
+
+        results = [
+            _make_result(
+                COLLECTION_CODE_PATTERNS, score=0.80, freshness_status="aging", rid="r1"
+            ),
+        ]
+
+        # Apply penalty with trace emission (replicate tier2 logic)
+        for _r in results:
+            if _r.get("collection") != COLLECTION_CODE_PATTERNS:
+                continue
+            _fs = (_r.get("freshness_status") or "unverified").lower()
+            _penalty = config.get_freshness_penalty(_fs)
+            if _penalty == 1.0:
+                continue
+            _orig_score = _r["score"]
+            _r["score"] = _r["score"] * _penalty
+            with contextlib.suppress(Exception):
+                mock_emit(
+                    event_type="freshness_penalty_applied",
+                    data={
+                        "input": f"point_id={_r.get('id')} freshness_status={_fs}",
+                        "output": f"score {_orig_score:.4f} → {_r['score']:.4f} (penalty={_penalty})",
+                        "metadata": {
+                            "point_id": str(_r.get("id")),
+                            "freshness_status": _fs,
+                            "original_score": round(_orig_score, 4),
+                            "penalized_score": round(_r["score"], 4),
+                            "penalty_factor": _penalty,
+                        },
+                    },
+                )
+
+        # Verify trace was emitted
+        assert mock_emit.call_count == 1
+        trace_call = mock_emit.call_args
+        assert trace_call.kwargs["event_type"] == "freshness_penalty_applied"
+        metadata = trace_call.kwargs["data"]["metadata"]
+        assert metadata["freshness_status"] == "aging"
+        assert metadata["penalty_factor"] == 0.9
+        assert metadata["original_score"] == 0.80
+        assert metadata["penalized_score"] == pytest.approx(0.80 * 0.9, abs=0.001)

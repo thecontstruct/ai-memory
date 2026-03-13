@@ -20,6 +20,7 @@ Input Schema:
     "transcript_path": "~/.claude/projects/.../xxx.jsonl"
 }
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -315,7 +316,7 @@ def main() -> int:
                 project=project,
             )
 
-        return 1  # Non-blocking error
+        return 0  # Hooks must exit 0 even on failure (§1.2)
 
 
 if __name__ == "__main__":

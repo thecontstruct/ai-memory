@@ -187,7 +187,10 @@ def _pair_turns(messages: list[dict]) -> list[dict]:
                 "user_tokens": msg.get("token_count"),
             }
             # Look ahead for assistant response
-            if i + 1 < len(messages) and _get_entry_role(messages[i + 1]) == "assistant":
+            if (
+                i + 1 < len(messages)
+                and _get_entry_role(messages[i + 1]) == "assistant"
+            ):
                 next_msg = messages[i + 1]
                 turn["assistant_output"] = _extract_text(_get_entry_content(next_msg))
                 turn["assistant_tokens"] = next_msg.get("token_count")
@@ -340,6 +343,7 @@ def main():
             )
 
         from memory.langfuse_config import get_langfuse_client
+
         # Check if Langfuse is enabled (config check only)
         if get_langfuse_client() is None:
             logger.warning(
@@ -360,7 +364,8 @@ def main():
         messages = _read_transcript(transcript_path)
         if not messages:
             logger.warning(
-                "Empty or missing transcript at %s — skipping session trace", transcript_path
+                "Empty or missing transcript at %s — skipping session trace",
+                transcript_path,
             )
             sys.exit(0)
 
@@ -413,8 +418,16 @@ def main():
         with langfuse_v3.start_as_current_observation(
             as_type="span",
             name="claude_code_session",
-            input=first_user_text[:LANGFUSE_PAYLOAD_MAX_CHARS] if first_user_text else None,
-            output=last_assistant_text[:LANGFUSE_PAYLOAD_MAX_CHARS] if last_assistant_text else None,
+            input=(
+                first_user_text[:LANGFUSE_PAYLOAD_MAX_CHARS]
+                if first_user_text
+                else None
+            ),
+            output=(
+                last_assistant_text[:LANGFUSE_PAYLOAD_MAX_CHARS]
+                if last_assistant_text
+                else None
+            ),
             **trace_kwargs,
         ) as root_span:
             # Set session and trace attributes via propagate_attributes (V3 pattern)
@@ -456,10 +469,18 @@ def main():
                     with langfuse_v3.start_as_current_observation(
                         as_type=turn_type,
                         name=f"turn_{i}",
-                        input=turn_input[:LANGFUSE_PAYLOAD_MAX_CHARS] if turn_input else None,
+                        input=(
+                            turn_input[:LANGFUSE_PAYLOAD_MAX_CHARS]
+                            if turn_input
+                            else None
+                        ),
                     ) as turn_span:
                         update_kwargs = {
-                            "output": turn_output[:LANGFUSE_PAYLOAD_MAX_CHARS] if turn_output else None,
+                            "output": (
+                                turn_output[:LANGFUSE_PAYLOAD_MAX_CHARS]
+                                if turn_output
+                                else None
+                            ),
                             "metadata": token_meta,
                         }
                         # PLAN-014 G-04: Set model and usage on generation observations

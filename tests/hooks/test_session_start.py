@@ -3,6 +3,7 @@
 Tests V2.0 context injection behavior for compact/resume events.
 """
 
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -67,279 +68,6 @@ class TestSessionStartHook:
         # Cleanup after test
         if "session_start" in sys.modules:
             del sys.modules["session_start"]
-
-    def test_compact_event_retrieves_context(
-        self, compact_event, mock_qdrant, mock_config
-    ):
-        """Test that compact event triggers context injection.
-
-        V2.0 behavior: On compact, retrieve conversation context from discussions
-        collection (session summaries) and inject into Claude's context window.
-        """
-        from qdrant_client.models import PointStruct
-
-        # Setup mock data: session summary with rich context
-        session_id = compact_event["session_id"]
-        session_summary = [
-            PointStruct(
-                id="session-1",
-                vector=[0.1, 0.2, 0.3],
-                payload={
-                    "content": "Implemented error handling and logging in storage module",
-                    "type": "session",
-                    "session_id": session_id,
-                    "group_id": "ai-memory-module",
-                    "created_at": "2026-01-21T10:00:00Z",
-                    "first_user_prompt": "Add error handling to the storage module",
-                    "last_user_prompts": [
-                        {"content": "Add error handling to the storage module"},
-                        {"content": "Great, also add logging for failed operations"},
-                    ],
-                    "last_agent_responses": [
-                        {
-                            "content": "I'll add comprehensive error handling with graceful degradation to the storage module."
-                        }
-                    ],
-                    "session_metadata": {},
-                },
-            )
-        ]
-
-        # Insert into mock client
-        mock_qdrant.upsert("discussions", points=session_summary)
-
-        # Import the function to test
-        with (
-            patch("memory.qdrant_client.get_qdrant_client", return_value=mock_qdrant),
-            patch("memory.config.get_config", return_value=mock_config),
-        ):
-            # Import after patching
-            from session_start import get_conversation_context
-
-            # Call the function
-            context = get_conversation_context(
-                config=mock_config,
-                session_id=session_id,
-                project_name="ai-memory-module",
-                limit=5,
-            )
-
-            # Verify context includes summary
-            assert "Implemented error handling and logging" in context
-            # Verify context includes user messages from summary
-            assert "Add error handling to the storage module" in context
-            assert "also add logging" in context
-            # Verify context includes agent responses from summary
-            assert "error handling with graceful degradation" in context
-            # Verify section headers exist
-            assert "## Session Summaries" in context
-            assert "## Recent User Messages" in context
-            assert "## Agent Context Summary" in context
-
-    def test_resume_event_loads_session(self, resume_event, mock_qdrant, mock_config):
-        """Test that resume event triggers session context loading.
-
-        V2.0 behavior: On resume, load conversation context from the
-        discussions collection (session summaries) to restore session state.
-        """
-        from qdrant_client.models import PointStruct
-
-        session_id = resume_event["session_id"]
-
-        # Setup minimal session summary
-        points = [
-            PointStruct(
-                id="session-1",
-                vector=[0.1, 0.2, 0.3],
-                payload={
-                    "content": "Implemented search functionality",
-                    "type": "session",
-                    "session_id": session_id,
-                    "group_id": "ai-memory-module",
-                    "created_at": "2026-01-21T09:00:00Z",
-                    "first_user_prompt": "Implement the search functionality",
-                    "last_user_prompts": [
-                        {"content": "Implement the search functionality"}
-                    ],
-                    "last_agent_responses": [],
-                    "session_metadata": {},
-                },
-            )
-        ]
-
-        mock_qdrant.upsert("discussions", points=points)
-
-        with (
-            patch("memory.qdrant_client.get_qdrant_client", return_value=mock_qdrant),
-            patch("memory.config.get_config", return_value=mock_config),
-        ):
-            from session_start import get_conversation_context
-
-            context = get_conversation_context(
-                config=mock_config,
-                session_id=session_id,
-                project_name="ai-memory-module",
-                limit=5,
-            )
-
-            # Verify resume loads user message from summary
-            assert "Implement the search functionality" in context
-
-    def test_empty_transcript_handles_gracefully(self, mock_qdrant, mock_config):
-        """Test that empty conversation history returns empty context.
-
-        Graceful degradation: If no conversation data exists, return empty string
-        and let Claude continue without context injection.
-        """
-        with (
-            patch("memory.qdrant_client.get_qdrant_client", return_value=mock_qdrant),
-            patch("memory.config.get_config", return_value=mock_config),
-        ):
-            from session_start import get_conversation_context
-
-            # Call with session that has no data
-            context = get_conversation_context(
-                config=mock_config,
-                session_id="nonexistent_session",
-                project_name="ai-memory-module",
-                limit=5,
-            )
-
-            # Verify empty context returned
-            assert context == ""
-
-    def test_user_message_soft_cap(self, mock_qdrant, mock_config):
-        """Test that user messages respect 2000 char soft cap.
-
-        V2.0: User prompts from session summaries truncated at 2000 chars
-        using smart_truncate to prevent context explosion.
-        """
-        from qdrant_client.models import PointStruct
-
-        session_id = "test_session_long_message"
-
-        # Create a session summary with long user prompt (exceeding 2000 chars)
-        long_content = "This is a very long user prompt. " * 100  # ~3400 chars
-
-        points = [
-            PointStruct(
-                id="session-long",
-                vector=[0.1, 0.2, 0.3],
-                payload={
-                    "content": "Session with long user prompt",
-                    "type": "session",
-                    "session_id": session_id,
-                    "group_id": "ai-memory-module",
-                    "created_at": "2026-01-21T10:00:00Z",
-                    "first_user_prompt": "Long prompt",
-                    "last_user_prompts": [{"content": long_content}],
-                    "last_agent_responses": [],
-                    "session_metadata": {},
-                },
-            )
-        ]
-
-        mock_qdrant.upsert("discussions", points=points)
-
-        with (
-            patch("memory.qdrant_client.get_qdrant_client", return_value=mock_qdrant),
-            patch("memory.config.get_config", return_value=mock_config),
-        ):
-            from session_start import get_conversation_context
-
-            context = get_conversation_context(
-                config=mock_config,
-                session_id=session_id,
-                project_name="ai-memory-module",
-                limit=5,
-            )
-
-            # Verify smart_truncate marker present (adds "...")
-            assert "..." in context
-            # Verify content is truncated (2000 char limit + headers/formatting)
-            assert len(context) < 2500  # Generous margin for headers and formatting
-
-    def test_agent_response_condensed(self, mock_qdrant, mock_config):
-        """Test that agent responses are condensed to 500 chars.
-
-        V2.0: Agent responses from session summaries truncated at 500 chars
-        using smart_truncate for brevity.
-        """
-        from qdrant_client.models import PointStruct
-
-        session_id = "test_session_long_response"
-
-        # Create session summary with long agent response (exceeding 500 chars)
-        long_response = "I've implemented the feature. " * 50  # ~1500 chars
-
-        points = [
-            PointStruct(
-                id="session-long-agent",
-                vector=[0.1, 0.2, 0.3],
-                payload={
-                    "content": "Session with long agent response",
-                    "type": "session",
-                    "session_id": session_id,
-                    "group_id": "ai-memory-module",
-                    "created_at": "2026-01-21T10:02:00Z",
-                    "first_user_prompt": "Implement feature",
-                    "last_user_prompts": [],
-                    "last_agent_responses": [{"content": long_response}],
-                    "session_metadata": {},
-                },
-            )
-        ]
-
-        mock_qdrant.upsert("discussions", points=points)
-
-        with (
-            patch("memory.qdrant_client.get_qdrant_client", return_value=mock_qdrant),
-            patch("memory.config.get_config", return_value=mock_config),
-        ):
-            from session_start import get_conversation_context
-
-            context = get_conversation_context(
-                config=mock_config,
-                session_id=session_id,
-                project_name="ai-memory-module",
-                limit=5,
-            )
-
-            # Verify smart_truncate marker for agent response (adds "...")
-            assert "..." in context
-            # Verify agent content is limited
-            # Extract just the agent response section (rough check)
-            if "## Agent Context Summary" in context:
-                agent_section = context.split("## Agent Context Summary")[1]
-                # Should be condensed to ~500 chars + formatting
-                assert len(agent_section) < 1000  # Generous margin
-
-    def test_qdrant_unavailable_graceful_degradation(self, mock_config):
-        """Test graceful degradation when Qdrant is unavailable.
-
-        Should return empty context and log warning, not crash.
-        """
-        # Mock Qdrant client that raises exception
-        failing_client = MagicMock()
-        failing_client.scroll.side_effect = Exception("Connection refused")
-
-        with (
-            patch(
-                "memory.qdrant_client.get_qdrant_client", return_value=failing_client
-            ),
-            patch("memory.config.get_config", return_value=mock_config),
-        ):
-            from session_start import get_conversation_context
-
-            # Should not raise, should return empty
-            context = get_conversation_context(
-                config=mock_config,
-                session_id="test_session",
-                project_name="ai-memory-module",
-                limit=5,
-            )
-
-            assert context == ""
 
     def test_priority_injection_session_summaries_first(self, mock_qdrant, mock_config):
         """Test TECH-DEBT-047: Session summaries get priority over other memories.
@@ -506,6 +234,293 @@ class TestSessionStartHook:
             assert "─────" not in result
             # Verify useful content retained
             assert "Actual useful content" in result
+
+
+class TestParzivalCompactAgentIdFilter:
+    """Tests for H-1: Parzival compact path must include agent_id='parzival' filter.
+
+    Spec §4.1: '3 session summaries + 5 decisions (agent_id=parzival)'
+    The Parzival path uses config.parzival_enabled=True and calls get_recent()
+    with agent_id='parzival' to scope retrieval to Parzival's tenant.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_method(self):
+        """Reset module state before each test."""
+        if "session_start" in sys.modules:
+            del sys.modules["session_start"]
+        yield
+        if "session_start" in sys.modules:
+            del sys.modules["session_start"]
+
+    @staticmethod
+    def _build_mock_config(parzival_enabled=True):
+        mock_config = MagicMock()
+        mock_config.parzival_enabled = parzival_enabled
+        mock_config.project_name = "test-project"
+        mock_config.qdrant_host = "localhost"
+        mock_config.qdrant_port = 26350
+        mock_config.qdrant_api_key = "test-key"
+        mock_config.github_repo = "test-project"
+        mock_config.embedding_host = "localhost"
+        mock_config.embedding_port = 28080
+        return mock_config
+
+    def _run_compact_main(
+        self, mock_config, session_id_suffix="default", extra_patches=None
+    ):
+        """Run session_start.main() with compact trigger and mocked dependencies.
+
+        Returns the mock_searcher so callers can inspect get_recent calls.
+        """
+        import uuid
+
+        unique_session_id = (
+            f"sess_compact_parz_{session_id_suffix}_{uuid.uuid4().hex[:8]}"
+        )
+
+        mock_searcher = MagicMock()
+        mock_searcher.get_recent.return_value = []
+        mock_searcher.close.return_value = None
+
+        patches = {
+            "memory.search.MemorySearch": MagicMock(return_value=mock_searcher),
+            "memory.config.get_config": MagicMock(return_value=mock_config),
+            "memory.health.check_qdrant_health": MagicMock(return_value=True),
+            "memory.qdrant_client.get_qdrant_client": MagicMock(),
+            "memory.embeddings.EmbeddingClient": MagicMock(),
+        }
+        if extra_patches:
+            patches.update(extra_patches)
+
+        with contextlib.ExitStack() as ctx:
+            for target, mock_val in patches.items():
+                ctx.enter_context(patch(target, mock_val))
+            # Patch session_start module-level symbols after import
+            ctx.enter_context(
+                patch(
+                    "session_start.parse_hook_input",
+                    return_value={
+                        "cwd": "/test",
+                        "session_id": unique_session_id,
+                        "source": "compact",
+                    },
+                )
+            )
+            ctx.enter_context(
+                patch("session_start.detect_project", return_value="test-project")
+            )
+            ctx.enter_context(patch("session_start.cleanup_dedup_lock"))
+            ctx.enter_context(
+                patch("session_start.check_qdrant_health", return_value=True)
+            )
+            ctx.enter_context(patch("session_start.emit_trace_event", None))
+            ctx.enter_context(patch("session_start.log_conversation_context_injection"))
+            ctx.enter_context(
+                patch("session_start.inject_with_priority", return_value="test output")
+            )
+            ctx.enter_context(patch("builtins.print"))
+
+            from session_start import main
+
+            with contextlib.suppress(SystemExit):
+                main()
+
+        return mock_searcher
+
+    def test_parzival_compact_session_summaries_include_agent_id(self):
+        """Parzival compact path must call get_recent() with agent_id='parzival' for session summaries."""
+        mock_config = self._build_mock_config(parzival_enabled=True)
+        mock_searcher = self._run_compact_main(mock_config)
+
+        # Find the get_recent call for session summaries (type=session)
+        session_calls = [
+            call
+            for call in mock_searcher.get_recent.call_args_list
+            if call.kwargs.get("memory_type") == ["session"]
+        ]
+
+        assert len(session_calls) >= 1, (
+            f"Expected at least 1 get_recent call with memory_type=['session'], "
+            f"got {len(session_calls)}. All calls: {mock_searcher.get_recent.call_args_list}"
+        )
+
+        session_call = session_calls[0]
+        assert session_call.kwargs.get("agent_id") == "parzival", (
+            f"Parzival compact path must pass agent_id='parzival' for session summaries. "
+            f"Got kwargs: {session_call.kwargs}"
+        )
+        assert session_call.kwargs.get("limit") == 3, (
+            f"Parzival compact path must use limit=3 for session summaries. "
+            f"Got: {session_call.kwargs.get('limit')}"
+        )
+
+    def test_parzival_compact_decisions_include_agent_id(self):
+        """Parzival compact path must call get_recent() with agent_id='parzival' for decisions."""
+        mock_config = self._build_mock_config(parzival_enabled=True)
+        mock_searcher = self._run_compact_main(mock_config)
+
+        decision_calls = [
+            call
+            for call in mock_searcher.get_recent.call_args_list
+            if call.kwargs.get("memory_type") == ["decision"]
+        ]
+
+        assert len(decision_calls) >= 1, (
+            f"Expected at least 1 get_recent call with memory_type=['decision'], "
+            f"got {len(decision_calls)}. All calls: {mock_searcher.get_recent.call_args_list}"
+        )
+
+        decision_call = decision_calls[0]
+        assert decision_call.kwargs.get("agent_id") == "parzival", (
+            f"Parzival compact path must pass agent_id='parzival' for decisions. "
+            f"Got kwargs: {decision_call.kwargs}"
+        )
+        assert decision_call.kwargs.get("limit") == 5, (
+            f"Parzival compact path must use limit=5 for decisions. "
+            f"Got: {decision_call.kwargs.get('limit')}"
+        )
+
+
+class TestNonParzivalCompactSummaryLimit:
+    """Tests for non-Parzival compact summary limit logic (1st vs 2nd+ compact)."""
+
+    @pytest.fixture(autouse=True)
+    def setup_method(self):
+        """Reset module state before each test."""
+        if "session_start" in sys.modules:
+            del sys.modules["session_start"]
+        yield
+        if "session_start" in sys.modules:
+            del sys.modules["session_start"]
+
+    @staticmethod
+    def _build_mock_config():
+        mock_config = MagicMock()
+        mock_config.parzival_enabled = False
+        mock_config.project_name = "test-project"
+        mock_config.qdrant_host = "localhost"
+        mock_config.qdrant_port = 26350
+        mock_config.qdrant_api_key = "test-key"
+        mock_config.github_repo = "test-project"
+        mock_config.embedding_host = "localhost"
+        mock_config.embedding_port = 28080
+        return mock_config
+
+    def _run_compact_main(self, compact_count):
+        """Run non-Parzival compact path with given compact_count.
+
+        Returns mock_searcher so callers can inspect get_recent calls.
+        """
+        import uuid
+
+        unique_session_id = (
+            f"sess_compact_nonparz_{compact_count}_{uuid.uuid4().hex[:8]}"
+        )
+
+        mock_config = self._build_mock_config()
+        mock_searcher = MagicMock()
+        mock_searcher.get_recent.return_value = []
+        mock_searcher.close.return_value = None
+
+        mock_state = MagicMock()
+        mock_state.compact_count = compact_count
+
+        with contextlib.ExitStack() as ctx:
+            ctx.enter_context(
+                patch(
+                    "memory.search.MemorySearch", MagicMock(return_value=mock_searcher)
+                )
+            )
+            ctx.enter_context(
+                patch("memory.config.get_config", MagicMock(return_value=mock_config))
+            )
+            ctx.enter_context(
+                patch("memory.health.check_qdrant_health", MagicMock(return_value=True))
+            )
+            ctx.enter_context(
+                patch("memory.qdrant_client.get_qdrant_client", MagicMock())
+            )
+            ctx.enter_context(patch("memory.embeddings.EmbeddingClient", MagicMock()))
+            ctx.enter_context(
+                patch(
+                    "memory.injection.InjectionSessionState.load",
+                    MagicMock(return_value=mock_state),
+                )
+            )
+            ctx.enter_context(
+                patch(
+                    "session_start.parse_hook_input",
+                    return_value={
+                        "cwd": "/test",
+                        "session_id": unique_session_id,
+                        "source": "compact",
+                    },
+                )
+            )
+            ctx.enter_context(
+                patch("session_start.detect_project", return_value="test-project")
+            )
+            ctx.enter_context(
+                patch("session_start._detect_agent_id", return_value="default")
+            )
+            ctx.enter_context(patch("session_start.cleanup_dedup_lock"))
+            ctx.enter_context(
+                patch("session_start.check_qdrant_health", return_value=True)
+            )
+            ctx.enter_context(patch("session_start.emit_trace_event", None))
+            ctx.enter_context(patch("session_start.log_conversation_context_injection"))
+            ctx.enter_context(
+                patch("session_start.inject_with_priority", return_value="test output")
+            )
+            ctx.enter_context(patch("builtins.print"))
+
+            from session_start import main
+
+            with contextlib.suppress(SystemExit):
+                main()
+
+        return mock_searcher
+
+    def test_first_compact_gets_1_summary(self):
+        """1st compact (compact_count=0) should request limit=1 for session summaries."""
+        mock_searcher = self._run_compact_main(compact_count=0)
+
+        session_calls = [
+            call
+            for call in mock_searcher.get_recent.call_args_list
+            if call.kwargs.get("memory_type") == ["session"]
+        ]
+
+        assert len(session_calls) >= 1, (
+            f"Expected get_recent call with memory_type=['session']. "
+            f"All calls: {mock_searcher.get_recent.call_args_list}"
+        )
+
+        assert session_calls[0].kwargs.get("limit") == 1, (
+            f"1st compact (compact_count=0) should use limit=1 for summaries. "
+            f"Got: {session_calls[0].kwargs.get('limit')}"
+        )
+
+    def test_second_compact_gets_2_summaries(self):
+        """2nd+ compact (compact_count>=1) should request limit=2 for session summaries."""
+        mock_searcher = self._run_compact_main(compact_count=2)
+
+        session_calls = [
+            call
+            for call in mock_searcher.get_recent.call_args_list
+            if call.kwargs.get("memory_type") == ["session"]
+        ]
+
+        assert len(session_calls) >= 1, (
+            f"Expected get_recent call with memory_type=['session']. "
+            f"All calls: {mock_searcher.get_recent.call_args_list}"
+        )
+
+        assert session_calls[0].kwargs.get("limit") == 2, (
+            f"2nd+ compact (compact_count>=1) should use limit=2 for summaries. "
+            f"Got: {session_calls[0].kwargs.get('limit')}"
+        )
 
 
 class TestMatcherConfiguration:

@@ -100,8 +100,9 @@ class IntelligentChunker:
 
         # Initialize ProseChunker with BP-039 params (BUG-049 fix)
         # 512 tokens * 4 chars/token = 2048 chars max_chunk_size
-        # NOTE: ProseChunker always uses 512 tokens regardless of max_chunk_tokens
-        # (max_chunk_tokens is for ASTChunker/code content only)
+        # NOTE: ProseChunker uses fixed 512-token chunks. max_chunk_tokens parameter
+        # is not applied to prose chunking. This is acceptable as prose rarely exceeds
+        # 8192 tokens. See I-4.
         prose_config = ProseChunkerConfig(
             max_chunk_size=512 * CHARS_PER_TOKEN,
             overlap_ratio=overlap_pct,

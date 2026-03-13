@@ -22,9 +22,9 @@ import bcrypt
 def atomic_write(path, content):
     """Write content atomically using temp file + rename."""
     dir_name = os.path.dirname(path)
-    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             f.write(content)
         os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
         os.rename(tmp_path, path)
@@ -34,20 +34,23 @@ def atomic_write(path, content):
 
 
 def main():
-    password = os.environ.get('PROMETHEUS_ADMIN_PASSWORD', '').strip()
-    qdrant_key = os.environ.get('QDRANT_API_KEY', '').strip()
+    password = os.environ.get("PROMETHEUS_ADMIN_PASSWORD", "").strip()
+    qdrant_key = os.environ.get("QDRANT_API_KEY", "").strip()
 
     if not password:
-        print('ERROR: PROMETHEUS_ADMIN_PASSWORD not set', file=sys.stderr)
+        print("ERROR: PROMETHEUS_ADMIN_PASSWORD not set", file=sys.stderr)
         sys.exit(1)
     if not qdrant_key:
-        print('ERROR: QDRANT_API_KEY not set', file=sys.stderr)
+        print("ERROR: QDRANT_API_KEY not set", file=sys.stderr)
         sys.exit(1)
 
-    runtime_dir = '/etc/prometheus/runtime'
+    runtime_dir = "/etc/prometheus/runtime"
     os.makedirs(runtime_dir, exist_ok=True)
     # Prometheus runs as nobody (65534) — directory must be world-readable
-    os.chmod(runtime_dir, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+    os.chmod(
+        runtime_dir,
+        stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH,
+    )
 
     # Clear stale configs to prevent prometheus from reading outdated files
     # if this init container fails after partial write
@@ -56,24 +59,26 @@ def main():
 
     # Generate bcrypt hash from current password
     hash_val = bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
-    assert hash_val.startswith('$2b$'), f'Unexpected bcrypt hash format: {hash_val[:10]}'
+    assert hash_val.startswith(
+        "$2b$"
+    ), f"Unexpected bcrypt hash format: {hash_val[:10]}"
 
     # Generate web.yml with fresh bcrypt hash
-    with open('/etc/prometheus/web.yml.template') as f:
+    with open("/etc/prometheus/web.yml.template") as f:
         template = f.read()
-    web_yml_path = os.path.join(runtime_dir, 'web.yml')
-    atomic_write(web_yml_path, template.replace('${BCRYPT_HASH}', hash_val))
-    print(f'web.yml generated (hash prefix: {hash_val[:20]}...)')
+    web_yml_path = os.path.join(runtime_dir, "web.yml")
+    atomic_write(web_yml_path, template.replace("${BCRYPT_HASH}", hash_val))
+    print(f"web.yml generated (hash prefix: {hash_val[:20]}...)")
 
     # Generate prometheus.yml with env var substitution
-    with open('/etc/prometheus/prometheus.yml.template') as f:
+    with open("/etc/prometheus/prometheus.yml.template") as f:
         prom = f.read()
-    prom = prom.replace('${QDRANT_API_KEY}', qdrant_key)
-    prom = prom.replace('${PROMETHEUS_ADMIN_PASSWORD}', password)
-    prom_yml_path = os.path.join(runtime_dir, 'prometheus.yml')
+    prom = prom.replace("${QDRANT_API_KEY}", qdrant_key)
+    prom = prom.replace("${PROMETHEUS_ADMIN_PASSWORD}", password)
+    prom_yml_path = os.path.join(runtime_dir, "prometheus.yml")
     atomic_write(prom_yml_path, prom)
-    print('prometheus.yml generated with env var substitution')
+    print("prometheus.yml generated with env var substitution")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

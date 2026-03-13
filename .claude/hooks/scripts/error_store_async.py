@@ -188,22 +188,8 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
         qdrant_use_https = os.getenv("QDRANT_USE_HTTPS", "false").lower() == "true"
         collection_name = os.getenv("QDRANT_COLLECTION", COLLECTION_CODE_PATTERNS)
 
-        # FIX #3: Dedup check in background (not hot path)
-        # Check if this exact error has already been stored
-        content_hash = error_context.get("content_hash")
-        if content_hash:
-            from memory.filters import ImplementationFilter
-
-            impl_filter = ImplementationFilter()
-            if impl_filter.is_duplicate(content_hash, collection_name):
-                logger.info(
-                    "error_duplicate_skipped_background",
-                    extra={
-                        "content_hash": content_hash,
-                        "error": error_context.get("error_message", "")[:50],
-                    },
-                )
-                return  # Skip storage, already captured
+        # Dedup: handled by deterministic uuid5(content_hash) at upsert time (line ~542).
+        # ImplementationFilter pre-check removed — content_hash not available at fork time.
 
         # Initialize AsyncQdrantClient
         if AsyncQdrantClient is None:
@@ -484,6 +470,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                 "chunk_size_tokens": content_tokens,
                 "overlap_tokens": 0,
             },
+            "access_count": 0,
             # v2.0.6: Semantic Decay fields
             "decay_score": 1.0,
             "freshness_status": "unverified",
@@ -778,7 +765,7 @@ async def main_async() -> int:
     """Async entry point with timeout handling.
 
     Returns:
-        Exit code: 0 (success) or 1 (error)
+        Exit code: 0 always (§1.2 Principle 4: hooks never block Claude)
     """
     try:
         # Read error context from stdin
@@ -801,13 +788,13 @@ async def main_async() -> int:
             queue_operation(error_context, "timeout")
         except Exception:
             pass
-        return 1
+        return 0  # Hooks must always exit 0 (§1.2 Principle 4)
 
     except Exception as e:
         logger.error(
             "async_main_failed", extra={"error": str(e), "error_type": type(e).__name__}
         )
-        return 1
+        return 0  # Hooks must always exit 0 (§1.2 Principle 4)
 
 
 def main() -> int:
@@ -819,7 +806,7 @@ def main() -> int:
             "asyncio_run_failed",
             extra={"error": str(e), "error_type": type(e).__name__},
         )
-        return 1
+        return 0  # Hooks must always exit 0 (§1.2 Principle 4)
 
 
 if __name__ == "__main__":

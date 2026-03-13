@@ -90,7 +90,6 @@ def main():
                 del env_section[var]
                 print(f"  Removed env.{var}")
 
-
     # Write updated settings.json atomically (preserve indent=2)
     fd, temp_path = tempfile.mkstemp(
         dir=str(settings_path.parent), prefix=".settings_", suffix=".tmp"

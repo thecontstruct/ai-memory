@@ -492,11 +492,13 @@ class EmbeddingClient:
         chunk_offsets: list[tuple[int, int]],
         project: str = "unknown",
     ) -> list[list[float]]:
-        """Generate embeddings using Jina late chunking (BP-028).
+        """Generate embeddings using chunked embedding (BP-028).
 
-        Sends the full document as a single sequence and returns per-chunk
-        embeddings computed via mean-pooling over each chunk's token range.
-        Preserves cross-chunk context — chunks "know about" each other.
+        Sends each chunk as an independent text segment and returns per-chunk
+        embeddings. Note: Despite the method name, the current implementation uses
+        independent chunk embedding, not true late chunking. True late chunking
+        (single transformer pass with per-chunk mean pooling) deferred to v2.3.0.
+        See TD-274.
 
         Only valid for documents <= 8192 tokens (Jina context limit).
         For documents > 8192 tokens, use regular embed() per chunk instead.
@@ -531,7 +533,7 @@ class EmbeddingClient:
                 raise EmbeddingError(
                     "LATE_CHUNKING_EMPTY_RESPONSE: service returned no embeddings"
                 )
-            # Late chunking returns list of per-chunk embeddings (not wrapped in outer list)
+            # Chunked embedding returns list of per-chunk embeddings (not wrapped in outer list)
             # Shape: [[chunk0_vector], [chunk1_vector], ...] OR [chunk0_vector, chunk1_vector, ...]
             # Normalize to flat list of vectors
             if (

@@ -430,7 +430,7 @@ def run_freshness_scan(
                 },
                 start_time=_trace_start,
                 session_id="freshness_scan",
-                tags=["decay"],
+                tags=["freshness"],
             )
 
     # Step 2: Scroll code-patterns and compare
@@ -562,7 +562,7 @@ def run_freshness_scan(
     if emit_trace_event:
         with contextlib.suppress(Exception):
             emit_trace_event(
-                event_type="freshness_scan_complete",
+                event_type="freshness_scan",
                 data={
                     "input": f"Freshness scan for {group_id or 'all projects'}"[
                         :TRACE_CONTENT_MAX
@@ -585,7 +585,7 @@ def run_freshness_scan(
                 start_time=_trace_start,
                 end_time=datetime.now(timezone.utc),
                 session_id="freshness_scan",
-                tags=["decay"],
+                tags=["freshness"],
             )
 
     # Step 6: Push Prometheus metrics (fire-and-forget)
@@ -675,7 +675,7 @@ def _log_freshness_results(
         with open(log_path, "a", encoding="utf-8") as f:
             for result in results:
                 entry = {
-                    "timestamp": timestamp,
+                    "checked_at": timestamp,
                     "point_id": result.point_id,
                     "file_path": result.file_path,
                     "memory_type": result.memory_type,
