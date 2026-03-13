@@ -50,6 +50,11 @@ try:
 except ImportError:
     emit_trace_event = None
 
+try:
+    from .metrics_push import push_freshness_metrics_async
+except ImportError:
+    push_freshness_metrics_async = None
+
 TRACE_CONTENT_MAX = 10000  # Max chars for Langfuse input/output fields
 
 logger = logging.getLogger("ai_memory.freshness")
@@ -589,9 +594,7 @@ def run_freshness_scan(
             )
 
     # Step 6: Push Prometheus metrics (fire-and-forget)
-    try:
-        from .metrics_push import push_freshness_metrics_async
-
+    if push_freshness_metrics_async is not None:
         push_freshness_metrics_async(
             fresh=fresh,
             aging=aging,
@@ -601,8 +604,6 @@ def run_freshness_scan(
             duration_seconds=duration,
             project=group_id or "unknown",
         )
-    except ImportError:
-        logger.debug("metrics_push not available, skipping freshness metrics")
 
     return report
 

@@ -505,7 +505,10 @@ class TestMustNotTypesFilter:
         # Read the actual source code of context_injection_tier2.py to verify
         tier2_path = str(
             Path(__file__).resolve().parent.parent.parent
-            / ".claude" / "hooks" / "scripts" / "context_injection_tier2.py"
+            / ".claude"
+            / "hooks"
+            / "scripts"
+            / "context_injection_tier2.py"
         )
         with open(tier2_path) as f:
             source = f.read()

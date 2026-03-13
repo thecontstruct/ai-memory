@@ -697,7 +697,7 @@ class TestFreshnessMetricsPush:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config = MemoryConfig(freshness_enabled=True, audit_dir=Path(".audit"))
-            with patch("memory.metrics_push.push_freshness_metrics_async") as mock_push:
+            with patch("memory.freshness.push_freshness_metrics_async") as mock_push:
                 report = run_freshness_scan(config=config, cwd=tmpdir)
                 assert report.total_checked == 1
                 # push_freshness_metrics_async should have been called
@@ -732,7 +732,7 @@ class TestFreshnessMetricsPush:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config = MemoryConfig(freshness_enabled=True, audit_dir=Path(".audit"))
-            with patch("memory.metrics_push.push_freshness_metrics_async") as mock_push:
+            with patch("memory.freshness.push_freshness_metrics_async") as mock_push:
                 report = run_freshness_scan(config=config, cwd=tmpdir)
 
                 assert report.total_checked == 1
