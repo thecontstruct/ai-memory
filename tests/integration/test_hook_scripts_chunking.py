@@ -351,7 +351,7 @@ class TestIntelligentChunkerRouting:
 
     def test_user_message_routes_to_whole(self):
         """Short user messages stored as single whole chunk."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "This is a user prompt."
         chunks = chunker.chunk(
             content, file_path="prompt", content_type=ContentType.USER_MESSAGE
@@ -365,7 +365,7 @@ class TestIntelligentChunkerRouting:
 
     def test_agent_response_routes_to_whole(self):
         """Short agent responses stored as single whole chunk."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "This is an agent response."
         chunks = chunker.chunk(
             content, file_path="response", content_type=ContentType.AGENT_RESPONSE
