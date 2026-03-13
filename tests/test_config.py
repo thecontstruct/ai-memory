@@ -45,7 +45,7 @@ class TestMemoryConfig:
         # Core thresholds
         assert config.similarity_threshold == 0.7
         assert config.dedup_threshold == 0.95
-        assert config.max_retrievals == 5
+        assert config.max_retrievals == 10
         assert (
             config.token_budget == 4000
         )  # Updated per BP-039 Section 3 (TECH-DEBT-116)

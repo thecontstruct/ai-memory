@@ -16,10 +16,12 @@ Sources:
 - Python 3.14 fork deprecation: https://iifx.dev/en/articles/460266762/
 - Asyncio subprocess patterns: https://docs.python.org/3/library/asyncio-subprocess.html
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
+import hashlib
 import json
 import logging
 import os
@@ -228,6 +230,241 @@ def fork_to_background(hook_input: dict[str, Any], trace_id: str | None = None) 
         # Don't raise - graceful degradation
 
 
+def detect_edit_write_fix(hook_input: dict[str, Any]) -> None:
+    """Detect if a successful Edit/Write resolves a prior error (§C4b).
+
+    After existing fork_to_background(), check if the tool operation fixes an active error.
+
+    Fix detection conditions:
+    a) Successful Edit to file with active error → fix detected
+    b) Successful Write creating file referenced in error (FileNotFoundError) → fix detected
+
+    Args:
+        hook_input: Validated hook input
+    """
+    try:
+        tool_name = hook_input.get("tool_name", "")
+        if tool_name not in ("Edit", "Write"):
+            return
+
+        session_id = hook_input.get("session_id", "")
+        if not session_id:
+            return
+
+        # Check for tool success — if tool_response has "error", it failed
+        tool_response = hook_input.get("tool_response", {})
+        if isinstance(tool_response, dict) and "error" in tool_response:
+            return
+
+        from memory.injection import InjectionSessionState
+
+        state = InjectionSessionState.load(session_id)
+        if not state.error_state:
+            return
+
+        # Get the file being edited/written
+        tool_input = hook_input.get("tool_input", {})
+        file_path = tool_input.get("file_path", "")
+        if not file_path:
+            # Try tool_response for filePath
+            if isinstance(tool_response, dict):
+                file_path = tool_response.get("filePath", "")
+        if not file_path:
+            return
+
+        # Normalize file path for comparison
+        file_name = Path(file_path).name
+
+        matched_errors = []
+        for eid, edata in state.error_state.items():
+            if eid.startswith("_"):
+                continue
+            error_file = edata.get("file_path", "")
+            error_exception = edata.get("exception_type", "")
+
+            if tool_name == "Edit":
+                # Edit to same file as error → fix
+                if error_file and (
+                    error_file == file_path
+                    or Path(error_file).name == file_name
+                    or file_path.endswith(error_file)
+                    or error_file.endswith(file_name)
+                ):
+                    matched_errors.append((eid, edata, True))  # same_file=True
+
+            elif tool_name == "Write":
+                # Write creating missing file (FileNotFoundError) → fix
+                if error_exception == "FileNotFoundError" and (
+                    error_file == file_path
+                    or Path(error_file).name == file_name
+                    or file_path.endswith(error_file)
+                ):
+                    matched_errors.append((eid, edata, True))
+                # Also match if editing a file that was in error references
+                elif error_file and (
+                    error_file == file_path or Path(error_file).name == file_name
+                ):
+                    matched_errors.append((eid, edata, True))
+
+        if not matched_errors:
+            return
+
+        # Get fix content for embedding
+        if tool_name == "Edit":
+            fix_content = tool_input.get("new_string", "")[:1000]
+        elif tool_name == "Write":
+            fix_content = tool_input.get("content", "")[:1000]
+        else:
+            fix_content = ""
+
+        cwd = hook_input.get("cwd", "")
+
+        for error_group_id, error_data, same_file in matched_errors:
+            turn_diff = state.turn_count - error_data.get("turn_number", 0)
+
+            # Resolution confidence scoring per §C4b
+            if same_file and turn_diff <= 3:
+                confidence = 0.9
+            elif same_file and turn_diff <= 10:
+                confidence = 0.7
+            elif not same_file and turn_diff <= 3:
+                confidence = 0.5
+            else:
+                confidence = 0.3
+
+            _fork_fix_to_background_from_post_tool(
+                session_id=session_id,
+                error_group_id=error_group_id,
+                error_data=error_data,
+                fix_content=f"{tool_name} fix ({file_path}):\n{fix_content}",
+                resolution_confidence=confidence,
+                fix_source=tool_name.lower(),
+                cwd=cwd,
+                turn_count=state.turn_count,
+            )
+
+        # Remove resolved errors from session state
+        for eid, _, _ in matched_errors:
+            state.error_state.pop(eid, None)
+        state.save()
+
+    except Exception as e:
+        # Never block Claude for fix detection failures
+        try:
+            logger.warning("fix_detection_failed", extra={"error": str(e)})
+        except Exception:
+            pass
+
+
+def _fork_fix_to_background_from_post_tool(
+    session_id: str,
+    error_group_id: str,
+    error_data: dict,
+    fix_content: str,
+    resolution_confidence: float,
+    fix_source: str,
+    cwd: str,
+    turn_count: int = 0,
+) -> None:
+    """Fork fix storage to background process (reuses error_store_async.py).
+
+    Args:
+        session_id: Session identifier
+        error_group_id: Error group ID linking fix to error
+        error_data: Original error data from session state
+        fix_content: Content describing the fix
+        resolution_confidence: Confidence score (0-1)
+        fix_source: Source of fix detection ("edit", "write")
+        cwd: Working directory
+        turn_count: Current session turn count for delta calculation
+    """
+    try:
+        script_dir = Path(__file__).parent
+        error_store_script = script_dir / "error_store_async.py"
+
+        fix_context = {
+            "command": f"fix:{fix_source}",
+            "error_message": f"Fix for {error_data.get('exception_type', 'unknown')}",
+            "output": fix_content[:1000],
+            "exit_code": 0,
+            "file_references": [],
+            "stack_trace": None,
+            "cwd": cwd,
+            "session_id": session_id,
+            # Fix-specific fields passed through to store_async
+            "_is_fix": True,
+            "_error_group_id": error_group_id,
+            "_resolution_confidence": resolution_confidence,
+            "_fix_source": fix_source,
+            "_original_error": error_data,
+        }
+
+        input_json = json.dumps(fix_context)
+
+        subprocess_env = os.environ.copy()
+        if session_id:
+            subprocess_env["CLAUDE_SESSION_ID"] = session_id
+
+        process = subprocess.Popen(
+            [sys.executable, str(error_store_script)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=subprocess_env,
+        )
+
+        if process.stdin:
+            process.stdin.write(input_json.encode("utf-8"))
+            process.stdin.close()
+
+        # Langfuse trace for fix capture (§8.3)
+        if emit_trace_event:
+            try:
+                emit_trace_event(
+                    event_type="error_fix_capture",
+                    data={
+                        "input": fix_content[:TRACE_CONTENT_MAX],
+                        "output": f"Fix captured: group={error_group_id}, confidence={resolution_confidence}",
+                        "metadata": {
+                            "error_group_id": error_group_id,
+                            "resolution_confidence": resolution_confidence,
+                            "turns_since_error": turn_count
+                            - error_data.get("turn_number", 0),
+                            "file_overlap": fix_source in ("edit", "write"),
+                            "fix_source": fix_source,
+                        },
+                    },
+                    trace_id=uuid.uuid4().hex,
+                    session_id=session_id,
+                    tags=["capture", "error-fix"],
+                )
+            except Exception:
+                pass
+
+        # Prometheus metric
+        try:
+            from memory.metrics import error_fix_captures_total
+            from memory.project import detect_project as _dp
+
+            project = _dp(cwd) if cwd else "unknown"
+            error_fix_captures_total.labels(project=project).inc()
+        except Exception:
+            pass
+
+        logger.info(
+            "error_fix_forked",
+            extra={
+                "error_group_id": error_group_id,
+                "resolution_confidence": resolution_confidence,
+                "fix_source": fix_source,
+            },
+        )
+
+    except Exception as e:
+        logger.warning("fork_fix_failed", extra={"error": str(e)})
+
+
 def main() -> int:
     """PostToolUse hook entry point.
 
@@ -362,8 +599,12 @@ def main() -> int:
                                 "raw_length": len(content) if content else 0,
                                 "content_length": len(content) if content else 0,
                                 "content_extracted": bool(content),
-                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                "agent_name": os.environ.get(
+                                    "CLAUDE_AGENT_NAME", "main"
+                                ),
+                                "agent_role": os.environ.get(
+                                    "CLAUDE_AGENT_ROLE", "user"
+                                ),
                             },
                         },
                         trace_id=trace_id,
@@ -383,8 +624,10 @@ def main() -> int:
             # AC 2.1.1: Fork to background for <500ms performance
             fork_to_background(hook_input, trace_id)
 
+            # WP-6 §6.3: After existing capture fork, detect if this Edit/Write fixes an active error
+            detect_edit_write_fix(hook_input)
+
             # User notification via JSON systemMessage (visible in Claude Code UI per issue #4084)
-            file_path = hook_input.get("tool_response", {}).get("filePath", "")
             file_name = file_path.split("/")[-1] if file_path else "file"
             tool_name = hook_input.get("tool_name", "Edit")
             message = f"📥 AI Memory: Capturing {file_name} (via {tool_name})"

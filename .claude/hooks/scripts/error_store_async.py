@@ -7,6 +7,7 @@ error patterns to Qdrant with type="error_pattern" (v2.0).
 Performance: Runs independently of hook (no <500ms constraint)
 Timeout: Configurable via HOOK_TIMEOUT env var (default: 60s)
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -315,8 +316,12 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                                         "scan_result": "blocked",
                                         "pii_found": False,
                                         "secrets_found": True,
-                                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                        "agent_name": os.environ.get(
+                                            "CLAUDE_AGENT_NAME", "main"
+                                        ),
+                                        "agent_role": os.environ.get(
+                                            "CLAUDE_AGENT_ROLE", "user"
+                                        ),
                                     },
                                 },
                                 trace_id=trace_id,
@@ -335,8 +340,12 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                                     "metadata": {
                                         "reason": "scan_blocked",
                                         "scan_blocked": True,
-                                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                        "agent_name": os.environ.get(
+                                            "CLAUDE_AGENT_NAME", "main"
+                                        ),
+                                        "agent_role": os.environ.get(
+                                            "CLAUDE_AGENT_ROLE", "user"
+                                        ),
                                     },
                                 },
                                 trace_id=trace_id,
@@ -431,6 +440,17 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
         else:
             content_tokens = len(content) // 4
 
+        # WP-6: Determine if this is a fix entry or an error entry
+        is_fix = error_context.get("_is_fix", False)
+        subtype = "fix" if is_fix else "error"
+        error_group_id = error_context.get("_error_group_id") or error_context.get(
+            "error_group_id", ""
+        )
+        resolution_status = "resolved" if is_fix else "unresolved"
+        resolution_confidence = (
+            error_context.get("_resolution_confidence", 0.0) if is_fix else 0.0
+        )
+
         # Build Qdrant payload
         now = datetime.now(timezone.utc).isoformat()
         payload = {
@@ -438,6 +458,9 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
             "content_hash": content_hash,
             "group_id": group_id,
             "type": "error_pattern",
+            "subtype": subtype,
+            "error_group_id": error_group_id,
+            "resolution_status": resolution_status,
             "source_hook": "PostToolUse_ErrorCapture",
             "session_id": error_context.get("session_id", ""),
             "timestamp": now,
@@ -450,7 +473,9 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
             "file_path": primary_file,
             "file_references": file_refs,
             "has_stack_trace": bool(error_context.get("stack_trace")),
-            "tags": ["error", "bash_failure"],
+            "tags": (
+                ["error", "bash_failure"] if not is_fix else ["fix", "error_resolution"]
+            ),
             # TECH-DEBT-151: Add chunking metadata per Chunking-Strategy-V2.md Section 5
             "chunking_metadata": {
                 "chunk_type": "structured_smart_truncate",
@@ -466,8 +491,16 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
             "is_current": True,
             "version": 1,
             # F8/RISK-012: Agent identity for multi-agent Qdrant queries
-            "agent_id": os.environ.get("PARZIVAL_AGENT_ID", os.environ.get("AI_MEMORY_AGENT_ID", "default")),
+            "agent_id": os.environ.get(
+                "PARZIVAL_AGENT_ID", os.environ.get("AI_MEMORY_AGENT_ID", "default")
+            ),
         }
+
+        # WP-6: Add fix-specific fields
+        if is_fix:
+            payload["resolution_confidence"] = resolution_confidence
+            payload["fix_source"] = error_context.get("_fix_source", "unknown")
+            payload["original_error"] = error_context.get("_original_error", {})
 
         # SPEC-021: 5_chunk span — error patterns use structured truncation (single chunk)
         if emit_trace_event:
@@ -577,7 +610,9 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
         if sparse_vector is not None and SparseVector is not None:
             point_vector = {
                 "": vector,
-                "bm25": SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"]),
+                "bm25": SparseVector(
+                    indices=sparse_vector["indices"], values=sparse_vector["values"]
+                ),
             }
         else:
             point_vector = vector

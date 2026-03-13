@@ -89,6 +89,29 @@ failure_events_total = Counter(
 )
 
 # ==============================================================================
+# ERROR-FIX LINKAGE (V2.2.2 - WP-6, Behavior Spec §8.3)
+# ==============================================================================
+
+error_fix_captures_total = Counter(
+    "aimemory_error_fix_captures_total",
+    "Total error-fix pairs captured",
+    ["project"],
+)
+
+error_fix_injections_total = Counter(
+    "aimemory_error_fix_injections_total",
+    "Total error-fix pairs injected to agents",
+    ["project"],
+)
+
+error_fix_effectiveness_total = Counter(
+    "aimemory_error_fix_effectiveness_total",
+    "Error fix effectiveness tracking",
+    ["outcome", "project"],
+    # outcome: resolved, unresolved
+)
+
+# ==============================================================================
 # TOKEN TRACKING (V2.0 - TECH-DEBT-067)
 # ==============================================================================
 

@@ -19,10 +19,12 @@ Exit Codes:
 Performance: Must complete in <500ms (NFR-P1)
 Pattern: Fork to background using subprocess.Popen + start_new_session=True
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
+import hashlib
 import json
 import logging
 import os
@@ -63,6 +65,255 @@ except ImportError:
     emit_trace_event = None
 
 TRACE_CONTENT_MAX = 10000  # Max chars for Langfuse input/output fields
+
+
+def extract_command_prefix(command: str) -> str:
+    """Extract first token of command as prefix.
+
+    Args:
+        command: Full command string (e.g., "pip install foo")
+
+    Returns:
+        First token (e.g., "pip")
+    """
+    parts = command.strip().split()
+    return parts[0] if parts else "unknown"
+
+
+def extract_exception_type(output: str) -> str:
+    """Extract exception/error type from output.
+
+    Looks for Python exception patterns (e.g., "ModuleNotFoundError:"),
+    shell errors, and generic error types.
+
+    Args:
+        output: Error output text
+
+    Returns:
+        Exception type string (e.g., "ModuleNotFoundError")
+    """
+    # Python exception pattern: ExceptionName: message
+    match = re.search(r"(\w+Error|\w+Exception|\w+Warning):", output)
+    if match:
+        return match.group(1)
+
+    # Shell error patterns
+    if "command not found" in output.lower():
+        return "CommandNotFound"
+    if "permission denied" in output.lower():
+        return "PermissionDenied"
+    if "no such file or directory" in output.lower():
+        return "FileNotFoundError"
+    if "segmentation fault" in output.lower():
+        return "SegmentationFault"
+    if "syntax error" in output.lower():
+        return "SyntaxError"
+
+    return "UnknownError"
+
+
+def compute_error_group_id(
+    command_prefix: str, exception_type: str, session_id: str
+) -> str:
+    """Compute error_group_id: SHA-256(command_prefix + exception_type + session_id), first 16 hex chars.
+
+    Args:
+        command_prefix: First token of the command
+        exception_type: Extracted exception type
+        session_id: Current session ID
+
+    Returns:
+        First 16 hex chars of SHA-256 hash
+    """
+    key = f"{command_prefix}:{exception_type}:{session_id}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def detect_bash_fix(hook_input: dict[str, Any]) -> None:
+    """Detect if a successful Bash command resolves a prior error.
+
+    After error capture, check if current Bash SUCCESS resolves a prior error
+    by matching command_prefix + exit code 0.
+
+    Args:
+        hook_input: Validated hook input
+    """
+    try:
+        tool_response = hook_input.get("tool_response", {})
+        exit_code = tool_response.get("exitCode")
+
+        # Only check successful commands
+        if exit_code is not None and exit_code != 0:
+            return
+        if exit_code is None:
+            return
+
+        command = hook_input.get("tool_input", {}).get("command", "")
+        if not command:
+            return
+
+        session_id = hook_input.get("session_id", "")
+        if not session_id:
+            return
+
+        from memory.injection import InjectionSessionState
+
+        state = InjectionSessionState.load(session_id)
+        if not state.error_state:
+            return
+
+        current_prefix = extract_command_prefix(command)
+
+        # Find matching active errors by command_prefix
+        matched_errors = []
+        for eid, edata in state.error_state.items():
+            if eid.startswith("_"):
+                continue
+            stored_prefix = edata.get("command_prefix", "")
+            if stored_prefix and stored_prefix == current_prefix:
+                matched_errors.append((eid, edata))
+
+        if not matched_errors:
+            return
+
+        # Create fix entries for matched errors
+        for error_group_id, error_data in matched_errors:
+            turn_diff = state.turn_count - error_data.get("turn_number", 0)
+
+            # Resolution confidence scoring per §C4b
+            if turn_diff <= 3:
+                confidence = 0.5  # Same prefix but different context (Bash)
+            elif turn_diff <= 10:
+                confidence = 0.4
+            else:
+                confidence = 0.3
+
+            _fork_fix_to_background(
+                session_id=session_id,
+                error_group_id=error_group_id,
+                error_data=error_data,
+                fix_content=f"Bash fix: {command}",
+                resolution_confidence=confidence,
+                fix_source="bash_success",
+                cwd=hook_input.get("cwd", ""),
+                turn_count=state.turn_count,
+            )
+
+        # Remove resolved errors from session state
+        for eid, _ in matched_errors:
+            state.error_state.pop(eid, None)
+        state.save()
+
+    except Exception as e:
+        logger.warning("bash_fix_detection_failed", extra={"error": str(e)})
+
+
+def _fork_fix_to_background(
+    session_id: str,
+    error_group_id: str,
+    error_data: dict,
+    fix_content: str,
+    resolution_confidence: float,
+    fix_source: str,
+    cwd: str,
+    turn_count: int = 0,
+) -> None:
+    """Fork fix storage to background process (reuses error_store_async.py).
+
+    Args:
+        session_id: Session identifier
+        error_group_id: Error group ID linking fix to error
+        error_data: Original error data from session state
+        fix_content: Content describing the fix
+        resolution_confidence: Confidence score (0-1)
+        fix_source: Source of fix detection ("edit", "write", "bash_success")
+        cwd: Working directory
+    """
+    try:
+        script_dir = Path(__file__).parent
+        error_store_script = script_dir / "error_store_async.py"
+
+        fix_context = {
+            "command": f"fix:{fix_source}",
+            "error_message": f"Fix for {error_data.get('exception_type', 'unknown')}",
+            "output": fix_content[:1000],
+            "exit_code": 0,
+            "file_references": [],
+            "stack_trace": None,
+            "cwd": cwd,
+            "session_id": session_id,
+            # Fix-specific fields passed through to store_async
+            "_is_fix": True,
+            "_error_group_id": error_group_id,
+            "_resolution_confidence": resolution_confidence,
+            "_fix_source": fix_source,
+            "_original_error": error_data,
+        }
+
+        input_json = json.dumps(fix_context)
+
+        subprocess_env = os.environ.copy()
+        if session_id:
+            subprocess_env["CLAUDE_SESSION_ID"] = session_id
+
+        process = subprocess.Popen(
+            [sys.executable, str(error_store_script)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=subprocess_env,
+        )
+
+        if process.stdin:
+            process.stdin.write(input_json.encode("utf-8"))
+            process.stdin.close()
+
+        # Langfuse trace for fix capture
+        if emit_trace_event:
+            try:
+                emit_trace_event(
+                    event_type="error_fix_capture",
+                    data={
+                        "input": fix_content[:TRACE_CONTENT_MAX],
+                        "output": f"Fix captured: group={error_group_id}, confidence={resolution_confidence}",
+                        "metadata": {
+                            "error_group_id": error_group_id,
+                            "resolution_confidence": resolution_confidence,
+                            "turns_since_error": turn_count
+                            - error_data.get("turn_number", 0),
+                            "file_overlap": fix_source != "bash_success",
+                            "fix_source": fix_source,
+                        },
+                    },
+                    trace_id=uuid.uuid4().hex,
+                    session_id=session_id,
+                    tags=["capture", "error-fix"],
+                )
+            except Exception:
+                pass
+
+        # Prometheus metric
+        try:
+            from memory.metrics import error_fix_captures_total
+            from memory.project import detect_project
+
+            project = detect_project(cwd) if cwd else "unknown"
+            error_fix_captures_total.labels(project=project).inc()
+        except Exception:
+            pass
+
+        logger.info(
+            "error_fix_forked",
+            extra={
+                "error_group_id": error_group_id,
+                "resolution_confidence": resolution_confidence,
+                "fix_source": fix_source,
+            },
+        )
+
+    except Exception as e:
+        logger.warning("fork_fix_failed", extra={"error": str(e)})
 
 
 def detect_error_indicators(output: str, exit_code: int | None) -> bool:
@@ -136,12 +387,25 @@ def detect_error_indicators(output: str, exit_code: int | None) -> bool:
     if exit_code is None or exit_code == 0:
         first_lines = "\n".join(lines[:5]).lower()
         conversational_phrases = [
-            "i fixed", "i resolved", "the error was", "no errors",
-            "error handling", "error-free", "without error",
-            "has been fixed", "has been resolved", "was resolved",
-            "successfully", "works correctly", "no issues",
-            "error is gone", "errors were fixed", "fixed the error",
-            "resolved the error", "error has been", "handled the error",
+            "i fixed",
+            "i resolved",
+            "the error was",
+            "no errors",
+            "error handling",
+            "error-free",
+            "without error",
+            "has been fixed",
+            "has been resolved",
+            "was resolved",
+            "successfully",
+            "works correctly",
+            "no issues",
+            "error is gone",
+            "errors were fixed",
+            "fixed the error",
+            "resolved the error",
+            "error has been",
+            "handled the error",
         ]
         if any(phrase in first_lines for phrase in conversational_phrases):
             return False
@@ -310,6 +574,15 @@ def extract_error_context(hook_input: dict[str, Any]) -> dict[str, Any] | None:
     stack_trace = extract_stack_trace(output)
     error_message = extract_error_message(output)
 
+    # Compute error_group_id (§C4)
+    session_id = hook_input.get("session_id", "")
+    command_prefix = extract_command_prefix(command)
+    exception_type = extract_exception_type(output)
+    error_group_id = compute_error_group_id(command_prefix, exception_type, session_id)
+
+    # Primary file from references
+    primary_file = file_references[0]["file"] if file_references else "unknown"
+
     # Build error context
     context = {
         "command": command,
@@ -319,7 +592,11 @@ def extract_error_context(hook_input: dict[str, Any]) -> dict[str, Any] | None:
         "file_references": file_references,
         "stack_trace": stack_trace,
         "cwd": hook_input.get("cwd", ""),
-        "session_id": hook_input.get("session_id", ""),
+        "session_id": session_id,
+        # WP-6: Error-fix linkage fields
+        "command_prefix": command_prefix,
+        "exception_type": exception_type,
+        "error_group_id": error_group_id,
     }
 
     return context
@@ -446,13 +723,47 @@ def main() -> int:
             error_context = extract_error_context(hook_input)
 
             if error_context is None:
-                # No error detected - normal completion
+                # No error detected - check if this successful command resolves a prior error (§C4b)
+                detect_bash_fix(hook_input)
                 return 0
 
             # TD-241: Set CLAUDE_SESSION_ID in this process so library calls pick it up via env fallback
             _session_id = hook_input.get("session_id", "")
             if _session_id:
                 os.environ["CLAUDE_SESSION_ID"] = _session_id
+
+            # WP-6: Track error in session state for fix detection linkage
+            _egid = error_context.get("error_group_id", "")
+            _efile = (
+                error_context["file_references"][0]["file"]
+                if error_context.get("file_references")
+                else "unknown"
+            )
+            if _egid and _session_id:
+                # Also store command_prefix in session state for Bash fix matching
+                try:
+                    from memory.injection import InjectionSessionState
+
+                    _state = InjectionSessionState.load(_session_id)
+                    if _state.error_state is None:
+                        _state.error_state = {}
+                    _state.error_state[_egid] = {
+                        "error_group_id": _egid,
+                        "file_path": _efile,
+                        "turn_number": _state.turn_count,
+                        "exception_type": error_context.get(
+                            "exception_type", "UnknownError"
+                        ),
+                        "command_prefix": error_context.get(
+                            "command_prefix", "unknown"
+                        ),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                    _state.save()
+                except Exception as e:
+                    logger.warning(
+                        "error_state_tracking_failed", extra={"error": str(e)}
+                    )
 
             # SPEC-021: Generate trace_id for pipeline trace linking
             trace_id = None
@@ -479,8 +790,12 @@ def main() -> int:
                                 "raw_length": len(_error_output),
                                 "content_length": len(_error_output),
                                 "content_extracted": True,
-                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                "agent_name": os.environ.get(
+                                    "CLAUDE_AGENT_NAME", "main"
+                                ),
+                                "agent_role": os.environ.get(
+                                    "CLAUDE_AGENT_ROLE", "user"
+                                ),
                             },
                         },
                         trace_id=trace_id,
@@ -494,6 +809,34 @@ def main() -> int:
                     )
                 except Exception:
                     pass  # Never crash the hook for tracing
+
+                # WP-6 §8.3: Emit error_capture Langfuse trace
+                try:
+                    emit_trace_event(
+                        event_type="error_capture",
+                        data={
+                            "input": _error_content[:TRACE_CONTENT_MAX],
+                            "output": f"Error captured: group={_egid}",
+                            "metadata": {
+                                "error_group_id": _egid,
+                                "exception_type": error_context.get(
+                                    "exception_type", ""
+                                ),
+                                "file_path": _efile,
+                                "command_prefix": error_context.get(
+                                    "command_prefix", ""
+                                ),
+                            },
+                        },
+                        trace_id=trace_id,
+                        session_id=hook_input.get("session_id"),
+                        project_id=(
+                            detect_project_func(cwd) if detect_project_func else None
+                        ),
+                        tags=["capture", "error-fix"],
+                    )
+                except Exception:
+                    pass
 
             # Fork to background
             fork_to_background(error_context, trace_id)

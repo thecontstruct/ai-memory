@@ -408,7 +408,7 @@ class TestAuditLogging:
                     point_id="test-id",
                     file_path="src/memory/test.py",
                     memory_type="pattern",
-                    status="fresh",
+                    status=FreshnessTier.FRESH,
                     reason="Test reason",
                     stored_at="2026-02-16T00:00:00Z",
                     blob_hash_match=None,

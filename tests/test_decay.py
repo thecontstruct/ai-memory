@@ -333,7 +333,7 @@ def test_formula_has_defaults(default_config):
         collection="discussions",
         config=default_config,
     )
-    assert formula.defaults == {"stored_at": "2020-01-01T00:00:00Z"}
+    assert formula.defaults == {"stored_at": "2020-01-01T00:00:00Z", "access_count": 0}
 
 
 def test_formula_with_empty_overrides(empty_overrides_config):
@@ -459,15 +459,29 @@ def test_formula_internal_structure(default_config):
         temporal_component, "mult"
     ), "Temporal component should be MultExpression"
 
-    # The temporal mult should contain [weight, SumExpression(branches)]
+    # The temporal mult should contain [weight, temporal_score_expr]
     temporal_mult = temporal_component.mult
     assert len(temporal_mult) == 2, "Temporal mult should have weight and branch sum"
 
-    # The branch sum: grouped overrides + 1 catch-all
-    branch_sum = temporal_mult[1]
+    # temporal_mult[1] is the temporal_score_expr (remembrance protection wrapper):
+    # SumExpression([protected_branch (access_count>=3), unprotected_branch (access_count<3)])
+    temporal_score_expr = temporal_mult[1]
+    assert hasattr(
+        temporal_score_expr, "sum"
+    ), "Temporal score should be wrapped in SumExpression for remembrance protection"
+    assert len(temporal_score_expr.sum) == 2, (
+        "Temporal score should have 2 branches: protected (access_count>=3) and unprotected"
+    )
+
+    # Navigate into the unprotected branch to find the actual decay type branches
+    unprotected_branch = temporal_score_expr.sum[1]
+    assert hasattr(
+        unprotected_branch, "mult"
+    ), "Unprotected branch should be a MultExpression"
+    branch_sum = unprotected_branch.mult[1]
     assert hasattr(
         branch_sum, "sum"
-    ), "Temporal branches should be wrapped in SumExpression"
+    ), "Decay branches should be wrapped in SumExpression"
 
     # Count unique half-life groups in the config overrides
     overrides = default_config.get_decay_type_overrides()

@@ -97,3 +97,9 @@ Before handing to [DA] for execution, verify:
 
 The team design document feeds directly into [DA] Dispatch Agent for execution.
 Parzival activates all agents himself via Claude Code teams — the user does not run agents.
+
+**MANDATORY ROUTING**: After user approves the team design, Parzival MUST immediately
+load and execute `{workflows_path}/cycles/agent-dispatch/workflow.md` starting at
+step-02 (team creation) — the instruction preparation (step-01) is already complete
+from the context blocks produced above. Execute step-02 once per agent in the team
+design, spawning teammates in parallel where the design specifies parallel execution.
