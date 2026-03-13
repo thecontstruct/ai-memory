@@ -632,7 +632,10 @@ def _update_freshness_payloads(
         try:
             client.set_payload(
                 collection_name=COLLECTION_CODE_PATTERNS,
-                payload={"freshness_status": status.value, "freshness_checked_at": now_iso},
+                payload={
+                    "freshness_status": status.value,
+                    "freshness_checked_at": now_iso,
+                },
                 points=point_ids,
             )
         except Exception as e:

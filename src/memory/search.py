@@ -762,7 +762,9 @@ class MemorySearch:
                 # undercount access_count (known trade-off — Qdrant has no atomic increment).
                 # Impact: remembrance protection threshold may activate one access late.
                 try:
-                    _unique_pids = list(dict.fromkeys(_pids))  # deduplicate, preserve order
+                    _unique_pids = list(
+                        dict.fromkeys(_pids)
+                    )  # deduplicate, preserve order
                     _retrieved_points = self.client.retrieve(
                         collection_name=_coll,
                         ids=_unique_pids,
@@ -771,7 +773,9 @@ class MemorySearch:
                     )
                     # Build lookup: point_id -> current access_count (L2: guard payload None)
                     _count_map: dict[str, int] = {
-                        str(point.id): int((point.payload or {}).get("access_count") or 0)
+                        str(point.id): int(
+                            (point.payload or {}).get("access_count") or 0
+                        )
                         for point in _retrieved_points
                     }
                 except Exception:

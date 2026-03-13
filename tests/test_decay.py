@@ -469,9 +469,9 @@ def test_formula_internal_structure(default_config):
     assert hasattr(
         temporal_score_expr, "sum"
     ), "Temporal score should be wrapped in SumExpression for remembrance protection"
-    assert len(temporal_score_expr.sum) == 2, (
-        "Temporal score should have 2 branches: protected (access_count>=3) and unprotected"
-    )
+    assert (
+        len(temporal_score_expr.sum) == 2
+    ), "Temporal score should have 2 branches: protected (access_count>=3) and unprotected"
 
     # Navigate into the unprotected branch to find the actual decay type branches
     unprotected_branch = temporal_score_expr.sum[1]

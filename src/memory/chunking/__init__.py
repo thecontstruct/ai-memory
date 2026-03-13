@@ -92,9 +92,7 @@ class IntelligentChunker:
         if not (0.0 <= overlap_pct <= 1.0):
             raise ValueError(f"overlap_pct must be 0.0-1.0, got {overlap_pct}")
         if min_chunk_tokens < 0:
-            raise ValueError(
-                f"min_chunk_tokens must be >= 0, got {min_chunk_tokens}"
-            )
+            raise ValueError(f"min_chunk_tokens must be >= 0, got {min_chunk_tokens}")
 
         self.max_chunk_tokens = max_chunk_tokens
         self.overlap_pct = overlap_pct
@@ -199,7 +197,9 @@ class IntelligentChunker:
         """
         if self.min_chunk_tokens > 0:
             original_count = len(chunks)
-            chunks = [c for c in chunks if count_tokens(c.content) >= self.min_chunk_tokens]
+            chunks = [
+                c for c in chunks if count_tokens(c.content) >= self.min_chunk_tokens
+            ]
             if len(chunks) < original_count:
                 logger.debug(
                     "chunker_filtered_trivial_chunks",

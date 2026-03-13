@@ -534,7 +534,11 @@ class EmbeddingClient:
             # Late chunking returns list of per-chunk embeddings (not wrapped in outer list)
             # Shape: [[chunk0_vector], [chunk1_vector], ...] OR [chunk0_vector, chunk1_vector, ...]
             # Normalize to flat list of vectors
-            if embeddings and isinstance(embeddings[0], list) and isinstance(embeddings[0][0], list):
+            if (
+                embeddings
+                and isinstance(embeddings[0], list)
+                and isinstance(embeddings[0][0], list)
+            ):
                 # Wrapped format: [[vec1], [vec2]] -> [vec1, vec2]
                 return [e[0] for e in embeddings]
             return embeddings

@@ -189,70 +189,115 @@ class TestFreshnessPenaltyApplication:
 
     def test_stale_code_pattern_score_set_to_zero(self):
         """code-patterns result with freshness_status=stale → score * 0.0 = 0."""
-        results = [_make_result(COLLECTION_CODE_PATTERNS, score=0.70, freshness_status="stale")]
+        results = [
+            _make_result(COLLECTION_CODE_PATTERNS, score=0.70, freshness_status="stale")
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(0.0)
 
     def test_expired_code_pattern_score_set_to_zero(self):
         """code-patterns result with freshness_status=expired → score * 0.0 = 0."""
-        results = [_make_result(COLLECTION_CODE_PATTERNS, score=0.80, freshness_status="expired")]
+        results = [
+            _make_result(
+                COLLECTION_CODE_PATTERNS, score=0.80, freshness_status="expired"
+            )
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(0.0)
 
     def test_fresh_code_pattern_score_unchanged(self):
         """code-patterns result with freshness_status=fresh → penalty=1.0, no change."""
         original_score = 0.85
-        results = [_make_result(COLLECTION_CODE_PATTERNS, score=original_score, freshness_status="fresh")]
+        results = [
+            _make_result(
+                COLLECTION_CODE_PATTERNS, score=original_score, freshness_status="fresh"
+            )
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(original_score)
 
     def test_unverified_code_pattern_score_unchanged(self):
         """code-patterns result with freshness_status=unverified → penalty=1.0, no change."""
         original_score = 0.75
-        results = [_make_result(COLLECTION_CODE_PATTERNS, score=original_score, freshness_status="unverified")]
+        results = [
+            _make_result(
+                COLLECTION_CODE_PATTERNS,
+                score=original_score,
+                freshness_status="unverified",
+            )
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(original_score)
 
     def test_aging_code_pattern_score_multiplied_by_09(self):
         """code-patterns result with freshness_status=aging → score * 0.9."""
-        results = [_make_result(COLLECTION_CODE_PATTERNS, score=0.70, freshness_status="aging")]
+        results = [
+            _make_result(COLLECTION_CODE_PATTERNS, score=0.70, freshness_status="aging")
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(0.70 * 0.9)
 
     def test_unknown_freshness_status_multiplied_by_08(self):
         """code-patterns result with freshness_status=unknown → score * 0.8."""
-        results = [_make_result(COLLECTION_CODE_PATTERNS, score=0.70, freshness_status="unknown")]
+        results = [
+            _make_result(
+                COLLECTION_CODE_PATTERNS, score=0.70, freshness_status="unknown"
+            )
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(0.70 * 0.8)
 
     def test_none_freshness_status_treated_as_unverified(self):
         """code-patterns result with freshness_status=None → treated as 'unverified', unchanged."""
         original_score = 0.65
-        results = [_make_result(COLLECTION_CODE_PATTERNS, score=original_score, freshness_status=None)]
+        results = [
+            _make_result(
+                COLLECTION_CODE_PATTERNS, score=original_score, freshness_status=None
+            )
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(original_score)
 
     def test_conventions_stale_score_unchanged(self):
         """conventions result with freshness_status=stale → penalty NOT applied (wrong collection)."""
         original_score = 0.70
-        results = [_make_result(COLLECTION_CONVENTIONS, score=original_score, freshness_status="stale")]
+        results = [
+            _make_result(
+                COLLECTION_CONVENTIONS, score=original_score, freshness_status="stale"
+            )
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(original_score)
 
     def test_discussions_stale_score_unchanged(self):
         """discussions result with freshness_status=stale → penalty NOT applied (wrong collection)."""
         original_score = 0.65
-        results = [_make_result(COLLECTION_DISCUSSIONS, score=original_score, freshness_status="stale")]
+        results = [
+            _make_result(
+                COLLECTION_DISCUSSIONS, score=original_score, freshness_status="stale"
+            )
+        ]
         _apply_freshness_penalties(results, self.config)
         assert results[0]["score"] == pytest.approx(original_score)
 
     def test_blocked_count_incremented_for_zero_penalty(self):
         """stale and expired results (penalty=0.0) increment the blocked counter."""
         results = [
-            _make_result(COLLECTION_CODE_PATTERNS, score=0.80, freshness_status="stale", rid="a"),
-            _make_result(COLLECTION_CODE_PATTERNS, score=0.75, freshness_status="expired", rid="b"),
-            _make_result(COLLECTION_CODE_PATTERNS, score=0.70, freshness_status="aging", rid="c"),
-            _make_result(COLLECTION_CODE_PATTERNS, score=0.65, freshness_status="fresh", rid="d"),
+            _make_result(
+                COLLECTION_CODE_PATTERNS, score=0.80, freshness_status="stale", rid="a"
+            ),
+            _make_result(
+                COLLECTION_CODE_PATTERNS,
+                score=0.75,
+                freshness_status="expired",
+                rid="b",
+            ),
+            _make_result(
+                COLLECTION_CODE_PATTERNS, score=0.70, freshness_status="aging", rid="c"
+            ),
+            _make_result(
+                COLLECTION_CODE_PATTERNS, score=0.65, freshness_status="fresh", rid="d"
+            ),
         ]
         blocked = _apply_freshness_penalties(results, self.config)
         assert blocked == 2  # only stale and expired increment counter
@@ -263,12 +308,27 @@ class TestFreshnessPenaltyApplication:
         conv_score = 0.75
         disc_score = 0.70
         results = [
-            _make_result(COLLECTION_CODE_PATTERNS, score=cp_score, freshness_status="stale", rid="cp"),
-            _make_result(COLLECTION_CONVENTIONS, score=conv_score, freshness_status="stale", rid="conv"),
-            _make_result(COLLECTION_DISCUSSIONS, score=disc_score, freshness_status="stale", rid="disc"),
+            _make_result(
+                COLLECTION_CODE_PATTERNS,
+                score=cp_score,
+                freshness_status="stale",
+                rid="cp",
+            ),
+            _make_result(
+                COLLECTION_CONVENTIONS,
+                score=conv_score,
+                freshness_status="stale",
+                rid="conv",
+            ),
+            _make_result(
+                COLLECTION_DISCUSSIONS,
+                score=disc_score,
+                freshness_status="stale",
+                rid="disc",
+            ),
         ]
         _apply_freshness_penalties(results, self.config)
-        assert results[0]["score"] == pytest.approx(0.0)        # code-patterns penalized
+        assert results[0]["score"] == pytest.approx(0.0)  # code-patterns penalized
         assert results[1]["score"] == pytest.approx(conv_score)  # unchanged
         assert results[2]["score"] == pytest.approx(disc_score)  # unchanged
 
@@ -424,6 +484,6 @@ class TestSearchExcludeExpiredFreshness:
                 for c in must_not
                 if isinstance(c, FieldCondition) and c.key == "freshness_status"
             ]
-            assert len(freshness_conditions) == 0, (
-                f"Default exclude_expired_freshness=False should not add filter. found {freshness_conditions}"
-            )
+            assert (
+                len(freshness_conditions) == 0
+            ), f"Default exclude_expired_freshness=False should not add filter. found {freshness_conditions}"

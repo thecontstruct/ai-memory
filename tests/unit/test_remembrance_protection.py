@@ -3,6 +3,7 @@
 Tests the access_count field handling and decay bypass logic.
 These are unit tests — they do not require a running Qdrant instance.
 """
+
 from unittest.mock import MagicMock, patch
 
 
@@ -56,11 +57,13 @@ class TestDecayFormulaAccessCountProtection:
     def test_build_decay_formula_importable(self):
         """build_decay_formula can be imported without error."""
         from memory.decay import build_decay_formula
+
         assert callable(build_decay_formula)
 
     def test_decay_module_importable(self):
         """decay module imports cleanly."""
         import memory.decay as decay_module
+
         assert hasattr(decay_module, "build_decay_formula")
         assert hasattr(decay_module, "compute_decay_score")
 
@@ -180,9 +183,12 @@ class TestMemorySearchAccessCountUpdate:
             hybrid_search_enabled=False,
         )
 
-        with patch("memory.search.get_qdrant_client", return_value=mock_client), \
-             patch("memory.search.EmbeddingClient", return_value=mock_embedding):
+        with (
+            patch("memory.search.get_qdrant_client", return_value=mock_client),
+            patch("memory.search.EmbeddingClient", return_value=mock_embedding),
+        ):
             from memory.search import MemorySearch
+
             searcher = MemorySearch(config=config)
             results = searcher.search(
                 query="test query",
@@ -206,7 +212,9 @@ class TestMemorySearchAccessCountUpdate:
         from memory.config import MemoryConfig
 
         mock_scored_point = self._make_mock_point("pid-fail", access_count=0)
-        mock_retrieved_point = self._make_mock_retrieved_point("pid-fail", access_count=0)
+        mock_retrieved_point = self._make_mock_retrieved_point(
+            "pid-fail", access_count=0
+        )
 
         mock_response = MagicMock()
         mock_response.points = [mock_scored_point]
@@ -225,9 +233,12 @@ class TestMemorySearchAccessCountUpdate:
             hybrid_search_enabled=False,
         )
 
-        with patch("memory.search.get_qdrant_client", return_value=mock_client), \
-             patch("memory.search.EmbeddingClient", return_value=mock_embedding):
+        with (
+            patch("memory.search.get_qdrant_client", return_value=mock_client),
+            patch("memory.search.EmbeddingClient", return_value=mock_embedding),
+        ):
             from memory.search import MemorySearch
+
             searcher = MemorySearch(config=config)
             results = searcher.search(
                 query="test query",
@@ -263,9 +274,12 @@ class TestMemorySearchAccessCountUpdate:
             hybrid_search_enabled=False,
         )
 
-        with patch("memory.search.get_qdrant_client", return_value=mock_client), \
-             patch("memory.search.EmbeddingClient", return_value=mock_embedding):
+        with (
+            patch("memory.search.get_qdrant_client", return_value=mock_client),
+            patch("memory.search.EmbeddingClient", return_value=mock_embedding),
+        ):
             from memory.search import MemorySearch
+
             searcher = MemorySearch(config=config)
             results = searcher.search(
                 query="test query",

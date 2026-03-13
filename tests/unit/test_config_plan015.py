@@ -1,4 +1,5 @@
 """Tests for PLAN-015 config additions to MemoryConfig."""
+
 from memory.config import MemoryConfig, reset_config
 
 
@@ -70,12 +71,19 @@ class TestGetFreshnessPenalty:
 
     def test_case_insensitive(self):
         config = MemoryConfig()
-        assert config.get_freshness_penalty("FRESH") == config.get_freshness_penalty("fresh")
-        assert config.get_freshness_penalty("STALE") == config.get_freshness_penalty("stale")
+        assert config.get_freshness_penalty("FRESH") == config.get_freshness_penalty(
+            "fresh"
+        )
+        assert config.get_freshness_penalty("STALE") == config.get_freshness_penalty(
+            "stale"
+        )
 
     def test_unknown_status_returns_unknown_penalty(self):
         config = MemoryConfig()
-        assert config.get_freshness_penalty("bogus_status") == config.freshness_penalty_unknown
+        assert (
+            config.get_freshness_penalty("bogus_status")
+            == config.freshness_penalty_unknown
+        )
 
     def test_empty_string_treated_as_unknown(self):
         config = MemoryConfig()

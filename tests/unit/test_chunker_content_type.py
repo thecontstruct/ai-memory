@@ -140,5 +140,6 @@ class TestPlan015ChunkingChanges:
         assert len(result) >= 1
         # All returned chunks must have enough tokens
         from memory.chunking import count_tokens
+
         for chunk in result:
             assert count_tokens(chunk.content) >= 30

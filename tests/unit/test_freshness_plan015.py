@@ -72,9 +72,9 @@ def test_build_ground_truth_map_not_discussions():
 
     call_kwargs = mock_client.scroll.call_args
     collection_name = call_kwargs.kwargs.get("collection_name")
-    assert collection_name != COLLECTION_DISCUSSIONS, (
-        f"Expected COLLECTION_GITHUB but got COLLECTION_DISCUSSIONS: {collection_name}"
-    )
+    assert (
+        collection_name != COLLECTION_DISCUSSIONS
+    ), f"Expected COLLECTION_GITHUB but got COLLECTION_DISCUSSIONS: {collection_name}"
 
 
 def test_build_ground_truth_map_retains_type_filter():
@@ -105,9 +105,9 @@ def test_build_ground_truth_map_retains_type_filter():
         ):
             type_condition_found = True
 
-    assert type_condition_found, (
-        "type='github_code_blob' filter must be present in scroll_filter"
-    )
+    assert (
+        type_condition_found
+    ), "type='github_code_blob' filter must be present in scroll_filter"
 
 
 # ---------------------------------------------------------------------------
@@ -164,9 +164,9 @@ def test_count_commits_for_file_not_discussions():
 
     call_kwargs = mock_client.scroll.call_args
     collection_name = call_kwargs.kwargs.get("collection_name")
-    assert collection_name != COLLECTION_DISCUSSIONS, (
-        f"Expected COLLECTION_GITHUB but got COLLECTION_DISCUSSIONS: {collection_name}"
-    )
+    assert (
+        collection_name != COLLECTION_DISCUSSIONS
+    ), f"Expected COLLECTION_GITHUB but got COLLECTION_DISCUSSIONS: {collection_name}"
 
 
 def test_count_commits_for_file_retains_type_filter():
@@ -195,9 +195,9 @@ def test_count_commits_for_file_retains_type_filter():
         ):
             type_condition_found = True
 
-    assert type_condition_found, (
-        "type='github_commit' filter must be present in scroll_filter"
-    )
+    assert (
+        type_condition_found
+    ), "type='github_commit' filter must be present in scroll_filter"
 
 
 def test_count_commits_for_file_invalid_since_returns_zero():
@@ -303,7 +303,9 @@ async def test_post_sync_freshness_scan_called():
         f"run_freshness_scan should be called exactly once after sync, "
         f"but was called {scan_call_count['n']} time(s)"
     )
-    assert engine._save_state.called, "sync() should have saved state before freshness scan"
+    assert (
+        engine._save_state.called
+    ), "sync() should have saved state before freshness scan"
 
 
 @pytest.mark.asyncio
@@ -339,9 +341,13 @@ async def test_post_sync_freshness_scan_graceful_degradation():
             sys.modules.pop("memory.freshness", None)
 
     # If we reach here, the exception was swallowed correctly
-    assert result is not None, "sync() should return a SyncResult even after scan failure"
+    assert (
+        result is not None
+    ), "sync() should return a SyncResult even after scan failure"
     # State should have been saved (sync cycle completed)
-    assert engine._save_state.called, "sync() should have saved state before freshness scan"
+    assert (
+        engine._save_state.called
+    ), "sync() should have saved state before freshness scan"
 
 
 @pytest.mark.asyncio
@@ -373,7 +379,9 @@ async def test_post_sync_freshness_scan_warning_logged_on_failure(caplog):
             sys.modules.pop("memory.freshness", None)
 
     # The warning message from WP-8 graceful degradation block
-    warning_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    warning_messages = [
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ]
     assert any(
         "post_sync_freshness_scan_failed" in msg for msg in warning_messages
     ), f"Expected 'post_sync_freshness_scan_failed' warning, got: {warning_messages}"

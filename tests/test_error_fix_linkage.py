@@ -63,9 +63,7 @@ class TestErrorGroupId:
         result = capture_module.compute_error_group_id(
             "pip", "ModuleNotFoundError", "sess_123"
         )
-        expected = hashlib.sha256(
-            b"pip:ModuleNotFoundError:sess_123"
-        ).hexdigest()[:16]
+        expected = hashlib.sha256(b"pip:ModuleNotFoundError:sess_123").hexdigest()[:16]
         assert result == expected
 
     def test_length_is_16_hex(self, capture_module):
@@ -244,9 +242,7 @@ def _run_detect_bash_fix(capture_module, hook_input, mock_state):
 
     with (
         patch.dict(sys.modules, {"memory.injection": mock_injection}),
-        patch.object(
-            capture_module, "_fork_fix_to_background", side_effect=mock_fork
-        ),
+        patch.object(capture_module, "_fork_fix_to_background", side_effect=mock_fork),
     ):
         capture_module.detect_bash_fix(hook_input)
 

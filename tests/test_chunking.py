@@ -465,7 +465,7 @@ class TestIntelligentChunkerIntegration:
 
     def test_routes_python_to_ast_chunker(self):
         """Python files should be routed to AST chunker."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         code = """def foo():
     return "hello"
 
@@ -480,7 +480,7 @@ def bar():
 
     def test_routes_markdown_to_prose_chunker(self):
         """Markdown files should use ProseChunker (BUG-049 fix)."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "# Title\n\nSome content"
         chunks = chunker.chunk(content, "README.md")
 
@@ -492,7 +492,7 @@ def bar():
         """IntelligentChunker should work even if AST chunker unavailable."""
         # This is implicitly tested by the existing whole-content tests
         # They pass whether or not tree-sitter is installed
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         code = "def foo(): pass"
 
         # Should not crash, should return chunks (AST or whole)
