@@ -3,6 +3,7 @@
 
 Stores user messages to discussions collection with proper deduplication.
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -81,7 +82,13 @@ try:
         ResponseHandlingException,
         UnexpectedResponse,
     )
-    from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct, SparseVector
+    from qdrant_client.models import (
+        FieldCondition,
+        Filter,
+        MatchValue,
+        PointStruct,
+        SparseVector,
+    )
 except ImportError:
     PointStruct = None
     Filter = None
@@ -210,6 +217,7 @@ def store_user_message(hook_input: dict[str, Any]) -> bool:
             "stored_at": now,
             "embedding_status": "pending",
             "embedding_model": EMBEDDING_MODEL,
+            "access_count": 0,
             # v2.0.6: Semantic Decay fields
             "decay_score": 1.0,
             "freshness_status": "unverified",
@@ -217,7 +225,9 @@ def store_user_message(hook_input: dict[str, Any]) -> bool:
             "is_current": True,
             "version": 1,
             # F8/RISK-012: Agent identity for multi-agent Qdrant queries
-            "agent_id": os.environ.get("PARZIVAL_AGENT_ID", os.environ.get("AI_MEMORY_AGENT_ID", "default")),
+            "agent_id": os.environ.get(
+                "PARZIVAL_AGENT_ID", os.environ.get("AI_MEMORY_AGENT_ID", "default")
+            ),
         }
 
         # Check for duplicate message before storing (CRITICAL FIX: deduplication)
@@ -269,8 +279,12 @@ def store_user_message(hook_input: dict[str, Any]) -> bool:
                                 "content_hash": content_hash,
                                 "matched_point_id": matched_id,
                                 "collection": COLLECTION_DISCUSSIONS,
-                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                "agent_name": os.environ.get(
+                                    "CLAUDE_AGENT_NAME", "main"
+                                ),
+                                "agent_role": os.environ.get(
+                                    "CLAUDE_AGENT_ROLE", "user"
+                                ),
                             },
                         },
                         trace_id=trace_id,
@@ -357,8 +371,12 @@ def store_user_message(hook_input: dict[str, Any]) -> bool:
                                         "scan_result": "blocked",
                                         "pii_found": False,
                                         "secrets_found": True,
-                                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                        "agent_name": os.environ.get(
+                                            "CLAUDE_AGENT_NAME", "main"
+                                        ),
+                                        "agent_role": os.environ.get(
+                                            "CLAUDE_AGENT_ROLE", "user"
+                                        ),
                                     },
                                 },
                                 trace_id=trace_id,
@@ -377,8 +395,12 @@ def store_user_message(hook_input: dict[str, Any]) -> bool:
                                     "metadata": {
                                         "reason": "scan_blocked",
                                         "scan_blocked": True,
-                                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                        "agent_name": os.environ.get(
+                                            "CLAUDE_AGENT_NAME", "main"
+                                        ),
+                                        "agent_role": os.environ.get(
+                                            "CLAUDE_AGENT_ROLE", "user"
+                                        ),
                                     },
                                 },
                                 trace_id=trace_id,
@@ -614,11 +636,16 @@ def store_user_message(hook_input: dict[str, Any]) -> bool:
 
         # Generate BM25 sparse vectors for hybrid search (PLAN-013)
         sparse_vectors = [None] * len(chunks_to_store)
-        if getattr(config, "hybrid_search_enabled", False) and embedding_status == "complete":
+        if (
+            getattr(config, "hybrid_search_enabled", False)
+            and embedding_status == "complete"
+        ):
             try:
                 with EmbeddingClient(config) as sparse_client:
                     sparse_results = sparse_client.embed_sparse(chunk_contents)
-                    sparse_vectors = sparse_results if sparse_results else sparse_vectors
+                    sparse_vectors = (
+                        sparse_results if sparse_results else sparse_vectors
+                    )
             except Exception as e:
                 logger.debug("sparse_embedding_skipped", extra={"error": str(e)})
 
@@ -679,7 +706,9 @@ def store_user_message(hook_input: dict[str, Any]) -> bool:
             if sparse is not None and SparseVector is not None:
                 point_vector = {
                     "": vector,
-                    "bm25": SparseVector(indices=sparse["indices"], values=sparse["values"]),
+                    "bm25": SparseVector(
+                        indices=sparse["indices"], values=sparse["values"]
+                    ),
                 }
             else:
                 point_vector = vector

@@ -7,6 +7,7 @@ error patterns to Qdrant with type="error_pattern" (v2.0).
 Performance: Runs independently of hook (no <500ms constraint)
 Timeout: Configurable via HOOK_TIMEOUT env var (default: 60s)
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -187,22 +188,8 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
         qdrant_use_https = os.getenv("QDRANT_USE_HTTPS", "false").lower() == "true"
         collection_name = os.getenv("QDRANT_COLLECTION", COLLECTION_CODE_PATTERNS)
 
-        # FIX #3: Dedup check in background (not hot path)
-        # Check if this exact error has already been stored
-        content_hash = error_context.get("content_hash")
-        if content_hash:
-            from memory.filters import ImplementationFilter
-
-            impl_filter = ImplementationFilter()
-            if impl_filter.is_duplicate(content_hash, collection_name):
-                logger.info(
-                    "error_duplicate_skipped_background",
-                    extra={
-                        "content_hash": content_hash,
-                        "error": error_context.get("error_message", "")[:50],
-                    },
-                )
-                return  # Skip storage, already captured
+        # Dedup: handled by deterministic uuid5(content_hash) at upsert time (line ~542).
+        # ImplementationFilter pre-check removed — content_hash not available at fork time.
 
         # Initialize AsyncQdrantClient
         if AsyncQdrantClient is None:
@@ -315,8 +302,12 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                                         "scan_result": "blocked",
                                         "pii_found": False,
                                         "secrets_found": True,
-                                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                        "agent_name": os.environ.get(
+                                            "CLAUDE_AGENT_NAME", "main"
+                                        ),
+                                        "agent_role": os.environ.get(
+                                            "CLAUDE_AGENT_ROLE", "user"
+                                        ),
                                     },
                                 },
                                 trace_id=trace_id,
@@ -335,8 +326,12 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                                     "metadata": {
                                         "reason": "scan_blocked",
                                         "scan_blocked": True,
-                                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                        "agent_name": os.environ.get(
+                                            "CLAUDE_AGENT_NAME", "main"
+                                        ),
+                                        "agent_role": os.environ.get(
+                                            "CLAUDE_AGENT_ROLE", "user"
+                                        ),
                                     },
                                 },
                                 trace_id=trace_id,
@@ -431,6 +426,17 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
         else:
             content_tokens = len(content) // 4
 
+        # WP-6: Determine if this is a fix entry or an error entry
+        is_fix = error_context.get("_is_fix", False)
+        subtype = "fix" if is_fix else "error"
+        error_group_id = error_context.get("_error_group_id") or error_context.get(
+            "error_group_id", ""
+        )
+        resolution_status = "resolved" if is_fix else "unresolved"
+        resolution_confidence = (
+            error_context.get("_resolution_confidence", 0.0) if is_fix else 0.0
+        )
+
         # Build Qdrant payload
         now = datetime.now(timezone.utc).isoformat()
         payload = {
@@ -438,6 +444,9 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
             "content_hash": content_hash,
             "group_id": group_id,
             "type": "error_pattern",
+            "subtype": subtype,
+            "error_group_id": error_group_id,
+            "resolution_status": resolution_status,
             "source_hook": "PostToolUse_ErrorCapture",
             "session_id": error_context.get("session_id", ""),
             "timestamp": now,
@@ -450,7 +459,9 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
             "file_path": primary_file,
             "file_references": file_refs,
             "has_stack_trace": bool(error_context.get("stack_trace")),
-            "tags": ["error", "bash_failure"],
+            "tags": (
+                ["error", "bash_failure"] if not is_fix else ["fix", "error_resolution"]
+            ),
             # TECH-DEBT-151: Add chunking metadata per Chunking-Strategy-V2.md Section 5
             "chunking_metadata": {
                 "chunk_type": "structured_smart_truncate",
@@ -459,6 +470,7 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
                 "chunk_size_tokens": content_tokens,
                 "overlap_tokens": 0,
             },
+            "access_count": 0,
             # v2.0.6: Semantic Decay fields
             "decay_score": 1.0,
             "freshness_status": "unverified",
@@ -466,8 +478,16 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
             "is_current": True,
             "version": 1,
             # F8/RISK-012: Agent identity for multi-agent Qdrant queries
-            "agent_id": os.environ.get("PARZIVAL_AGENT_ID", os.environ.get("AI_MEMORY_AGENT_ID", "default")),
+            "agent_id": os.environ.get(
+                "PARZIVAL_AGENT_ID", os.environ.get("AI_MEMORY_AGENT_ID", "default")
+            ),
         }
+
+        # WP-6: Add fix-specific fields
+        if is_fix:
+            payload["resolution_confidence"] = resolution_confidence
+            payload["fix_source"] = error_context.get("_fix_source", "unknown")
+            payload["original_error"] = error_context.get("_original_error", {})
 
         # SPEC-021: 5_chunk span — error patterns use structured truncation (single chunk)
         if emit_trace_event:
@@ -577,7 +597,9 @@ async def store_error_pattern_async(error_context: dict[str, Any]) -> None:
         if sparse_vector is not None and SparseVector is not None:
             point_vector = {
                 "": vector,
-                "bm25": SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"]),
+                "bm25": SparseVector(
+                    indices=sparse_vector["indices"], values=sparse_vector["values"]
+                ),
             }
         else:
             point_vector = vector
@@ -743,7 +765,7 @@ async def main_async() -> int:
     """Async entry point with timeout handling.
 
     Returns:
-        Exit code: 0 (success) or 1 (error)
+        Exit code: 0 always (§1.2 Principle 4: hooks never block Claude)
     """
     try:
         # Read error context from stdin
@@ -766,13 +788,13 @@ async def main_async() -> int:
             queue_operation(error_context, "timeout")
         except Exception:
             pass
-        return 1
+        return 0  # Hooks must always exit 0 (§1.2 Principle 4)
 
     except Exception as e:
         logger.error(
             "async_main_failed", extra={"error": str(e), "error_type": type(e).__name__}
         )
-        return 1
+        return 0  # Hooks must always exit 0 (§1.2 Principle 4)
 
 
 def main() -> int:
@@ -784,7 +806,7 @@ def main() -> int:
             "asyncio_run_failed",
             extra={"error": str(e), "error_type": type(e).__name__},
         )
-        return 1
+        return 0  # Hooks must always exit 0 (§1.2 Principle 4)
 
 
 if __name__ == "__main__":

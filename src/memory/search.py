@@ -200,6 +200,10 @@ class MemorySearch:
         must_not_types: (
             list[str] | None
         ) = None,  # F13/TD-243: Qdrant-level type exclusion
+        exclude_expired_freshness: bool = False,  # WP-2: Pre-filter expired from code-patterns queries (Spec §4.5.3)
+        _access_count_dedup: (
+            list[str] | None
+        ) = None,  # H-3: Cross-turn dedup list (mutated in-place)
     ) -> list[dict]:
         """Search for relevant memories using semantic similarity with project scoping.
 
@@ -354,6 +358,15 @@ class MemorySearch:
         if must_not_types:
             must_not_conditions.append(
                 FieldCondition(key="type", match=MatchAny(any=must_not_types))
+            )
+
+        # WP-2: Belt-and-suspenders pre-filter — exclude EXPIRED from code-patterns at Qdrant query layer
+        if exclude_expired_freshness and collection == COLLECTION_CODE_PATTERNS:
+            must_not_conditions.append(
+                FieldCondition(
+                    key="freshness_status",
+                    match=MatchValue(value="expired"),
+                )
             )
 
         if filter_conditions or must_not_conditions:
@@ -590,12 +603,18 @@ class MemorySearch:
         for result in results:
             payload = result.payload or {}
             memory_type = payload.get("type", "unknown")
+            # L-9: Normalize freshness_status to lowercase for case-insensitive comparison
+            # Belt-and-suspenders: pre-retrieval Qdrant filter (line 364) is case-sensitive,
+            # so normalize here for downstream post-retrieval penalty consistency.
+            _raw_freshness = payload.get("freshness_status")
+            _freshness_status = (_raw_freshness or "unknown").lower()
             memory = {
                 **payload,  # Spread first - explicit fields below take precedence
                 "id": result.id,
                 "score": result.score,
                 "collection": collection,
                 "type": memory_type,
+                "freshness_status": _freshness_status,
                 "attribution": format_attribution(
                     collection, memory_type, result.score
                 ),
@@ -735,6 +754,111 @@ class MemorySearch:
                 "search_mode": _search_mode,
             },
         )
+
+        # Remembrance Protection: increment access_count for retrieved points (PLAN-015 §5.3)
+        # Only on search() — get_recent() is deterministic, no decay applied
+        # NOTE (L-11): Non-atomic read-increment-write. Qdrant lacks atomic increment.
+        # Acceptable for access_count (advisory, not critical). See L-11.
+        try:
+            _point_updates: dict[str, list[str]] = {}  # collection -> [point_ids]
+            for _mem in memories:
+                _coll = _mem.get("collection", collection)
+                _pid = _mem.get("id")
+                if _pid is not None and _coll:
+                    _point_updates.setdefault(_coll, []).append(str(_pid))
+
+            # H-3: Cross-turn dedup — skip points already incremented this turn.
+            # The caller passes a mutable list that persists across multiple search()
+            # calls in the same turn. If not provided, no cross-turn dedup.
+            _dedup_set = (
+                set(_access_count_dedup) if _access_count_dedup is not None else None
+            )
+
+            for _coll, _pids in _point_updates.items():
+                # H6: Batch retrieve — one call per collection instead of one per point
+                try:
+                    _unique_pids = list(
+                        dict.fromkeys(_pids)
+                    )  # deduplicate within this search() call, preserve order
+
+                    # H-3: Filter out points already incremented this turn
+                    if _dedup_set is not None:
+                        _unique_pids = [p for p in _unique_pids if p not in _dedup_set]
+                    if not _unique_pids:
+                        continue
+
+                    _retrieved_points = self.client.retrieve(
+                        collection_name=_coll,
+                        ids=_unique_pids,
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                    # Build lookup: point_id -> current access_count (L2: guard payload None)
+                    _count_map: dict[str, int] = {
+                        str(point.id): int(
+                            (point.payload or {}).get("access_count") or 0
+                        )
+                        for point in _retrieved_points
+                    }
+                except Exception:
+                    _unique_pids = list(dict.fromkeys(_pids))
+                    if _dedup_set is not None:
+                        _unique_pids = [p for p in _unique_pids if p not in _dedup_set]
+                    _count_map = {}
+
+                # M-7: Batch set_payload per collection instead of per-point.
+                # Group all points needing update, then issue one set_payload per
+                # distinct new access_count value per collection.
+                _batch_by_count: dict[int, list[str]] = {}  # new_count -> [point_ids]
+                _transition_pids: list[str] = []  # Points hitting threshold=3
+
+                for _pid in _unique_pids:
+                    _current_count = _count_map.get(_pid, 0)
+                    _new_count = _current_count + 1
+                    _batch_by_count.setdefault(_new_count, []).append(_pid)
+                    if _new_count == 3:
+                        _transition_pids.append(_pid)
+                    # H-3: Record that we incremented this point this turn
+                    if _access_count_dedup is not None:
+                        _access_count_dedup.append(_pid)
+                    if _dedup_set is not None:
+                        _dedup_set.add(_pid)
+
+                # M-7: Issue one set_payload call per distinct count value
+                for _new_count, _batch_pids in _batch_by_count.items():
+                    with contextlib.suppress(Exception):
+                        self.client.set_payload(
+                            collection_name=_coll,
+                            payload={"access_count": _new_count},
+                            points=_batch_pids,
+                        )  # Never block results for access_count update failures
+
+                # M1: emit trace only on transition from 2 to 3
+                if _transition_pids and emit_trace_event:
+                    for _pid in _transition_pids:
+                        with contextlib.suppress(Exception):
+                            emit_trace_event(
+                                event_type="remembrance_protection",
+                                data={
+                                    "input": f"access_count reached 3 for point {_pid}"[
+                                        :TRACE_CONTENT_MAX
+                                    ],
+                                    "output": "temporal_score override active (access_count >= 3)"[
+                                        :TRACE_CONTENT_MAX
+                                    ],
+                                    "metadata": {
+                                        "point_id": _pid,
+                                        "collection": _coll,
+                                        "access_count": 3,
+                                        "temporal_score_override": 1.0,
+                                    },
+                                },
+                                session_id=os.environ.get("CLAUDE_SESSION_ID"),
+                                tags=["remembrance_protection", _coll],
+                                project_id=group_id,
+                            )
+        except Exception:
+            pass  # Remembrance protection failure must never affect search results
 
         return memories
 
@@ -1085,6 +1209,7 @@ class MemorySearch:
             },
         )
 
+        # Remembrance Protection: access_count NOT incremented for get_recent() — deterministic, no decay
         return memories
 
     def search_both_collections(

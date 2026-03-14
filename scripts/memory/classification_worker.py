@@ -7,6 +7,7 @@ RESOURCE LIMITS:
 - Batch size: 10 items
 - Graceful shutdown on SIGTERM/SIGINT
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -108,7 +109,11 @@ async def process_task(task: ClassificationTask, executor: ThreadPoolExecutor) -
                 # as_type="generation": creates Langfuse GENERATION (not SPAN)
                 # model: specific model name (e.g., "llama3.2:3b", "claude-3-5-haiku-20241022")
                 # usage: token counts propagated from ProviderResponse via ClassificationResult
-                model_name = getattr(result, "model_name", "") or "unknown" if result else "unknown"
+                model_name = (
+                    getattr(result, "model_name", "") or "unknown"
+                    if result
+                    else "unknown"
+                )
                 data_payload = {
                     "input": task.content[:TRACE_CONTENT_MAX],
                     "output": output_text[:TRACE_CONTENT_MAX],
@@ -130,7 +135,8 @@ async def process_task(task: ClassificationTask, executor: ThreadPoolExecutor) -
                     event_type="9_classify",
                     data=data_payload,
                     trace_id=task.trace_id,
-                    session_id=task.session_id or "unknown",  # Wave 1H: Link to Claude session
+                    session_id=task.session_id
+                    or "unknown",  # Wave 1H: Link to Claude session
                     project_id=task.group_id,
                     start_time=classify_start,
                     end_time=classify_end,

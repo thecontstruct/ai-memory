@@ -26,6 +26,7 @@ Architecture:
 Exit Codes:
     - 0: Success (or graceful degradation)
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -270,8 +271,12 @@ def main() -> int:
                                     "collection": "conventions",
                                     "result_count": len(results),
                                     "file_type": language,
-                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                    "agent_name": os.environ.get(
+                                        "CLAUDE_AGENT_NAME", "main"
+                                    ),
+                                    "agent_role": os.environ.get(
+                                        "CLAUDE_AGENT_ROLE", "user"
+                                    ),
                                 },
                             },
                             trace_id=uuid4().hex,

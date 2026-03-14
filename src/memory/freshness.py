@@ -39,7 +39,7 @@ from qdrant_client.models import (
 
 from .config import (
     COLLECTION_CODE_PATTERNS,
-    COLLECTION_DISCUSSIONS,
+    COLLECTION_GITHUB,
     MemoryConfig,
     get_config,
 )
@@ -49,6 +49,11 @@ try:
     from .trace_buffer import emit_trace_event
 except ImportError:
     emit_trace_event = None
+
+try:
+    from .metrics_push import push_freshness_metrics_async
+except ImportError:
+    push_freshness_metrics_async = None
 
 TRACE_CONTENT_MAX = 10000  # Max chars for Langfuse input/output fields
 
@@ -132,9 +137,9 @@ def build_ground_truth_map(
 ) -> dict[str, GroundTruth]:
     """Build file_path -> GroundTruth lookup from GitHub code blob data.
 
-    Scrolls discussions collection filtered to source="github",
-    type="github_code_blob", is_current=True. Single scroll operation
-    per BP-066 Section 5.3 batch lookup map pattern.
+    Scrolls github collection (COLLECTION_GITHUB) for current code blob
+    snapshots, type="github_code_blob", is_current=True. Single scroll
+    operation per BP-066 Section 5.3 batch lookup map pattern.
 
     Args:
         client: QdrantClient instance.
@@ -149,7 +154,6 @@ def build_ground_truth_map(
 
     scroll_filter = Filter(
         must=[
-            FieldCondition(key="source", match=MatchValue(value="github")),
             FieldCondition(key="type", match=MatchValue(value="github_code_blob")),
             FieldCondition(key="is_current", match=MatchValue(value=True)),
         ]
@@ -159,7 +163,7 @@ def build_ground_truth_map(
 
     while True:
         points, next_offset = client.scroll(
-            collection_name=COLLECTION_DISCUSSIONS,
+            collection_name=COLLECTION_GITHUB,
             scroll_filter=scroll_filter,
             limit=100,
             offset=offset,
@@ -230,7 +234,6 @@ def count_commits_for_file(
 
     scroll_filter = Filter(
         must=[
-            FieldCondition(key="source", match=MatchValue(value="github")),
             FieldCondition(key="type", match=MatchValue(value="github_commit")),
             FieldCondition(key="is_current", match=MatchValue(value=True)),
         ]
@@ -238,7 +241,7 @@ def count_commits_for_file(
 
     while True:
         points, next_offset = client.scroll(
-            collection_name=COLLECTION_DISCUSSIONS,
+            collection_name=COLLECTION_GITHUB,
             scroll_filter=scroll_filter,
             limit=100,
             offset=offset,
@@ -432,7 +435,7 @@ def run_freshness_scan(
                 },
                 start_time=_trace_start,
                 session_id="freshness_scan",
-                tags=["decay"],
+                tags=["freshness"],
             )
 
     # Step 2: Scroll code-patterns and compare
@@ -564,7 +567,7 @@ def run_freshness_scan(
     if emit_trace_event:
         with contextlib.suppress(Exception):
             emit_trace_event(
-                event_type="freshness_scan_complete",
+                event_type="freshness_scan",
                 data={
                     "input": f"Freshness scan for {group_id or 'all projects'}"[
                         :TRACE_CONTENT_MAX
@@ -587,13 +590,11 @@ def run_freshness_scan(
                 start_time=_trace_start,
                 end_time=datetime.now(timezone.utc),
                 session_id="freshness_scan",
-                tags=["decay"],
+                tags=["freshness"],
             )
 
     # Step 6: Push Prometheus metrics (fire-and-forget)
-    try:
-        from .metrics_push import push_freshness_metrics_async
-
+    if push_freshness_metrics_async is not None:
         push_freshness_metrics_async(
             fresh=fresh,
             aging=aging,
@@ -603,8 +604,6 @@ def run_freshness_scan(
             duration_seconds=duration,
             project=group_id or "unknown",
         )
-    except ImportError:
-        logger.debug("metrics_push not available, skipping freshness metrics")
 
     return report
 
@@ -634,7 +633,10 @@ def _update_freshness_payloads(
         try:
             client.set_payload(
                 collection_name=COLLECTION_CODE_PATTERNS,
-                payload={"freshness_status": status, "freshness_checked_at": now_iso},
+                payload={
+                    "freshness_status": status.value,
+                    "freshness_checked_at": now_iso,
+                },
                 points=point_ids,
             )
         except Exception as e:
@@ -664,8 +666,6 @@ def _log_freshness_results(
         cwd: Working directory for resolving relative audit_dir.
             If None, uses os.getcwd().
     """
-    import os
-
     base = Path(cwd) if cwd else Path(os.getcwd())
     log_path = base / config.audit_dir / "logs" / "freshness-log.jsonl"
 
@@ -676,11 +676,11 @@ def _log_freshness_results(
         with open(log_path, "a", encoding="utf-8") as f:
             for result in results:
                 entry = {
-                    "timestamp": timestamp,
+                    "checked_at": timestamp,
                     "point_id": result.point_id,
                     "file_path": result.file_path,
                     "memory_type": result.memory_type,
-                    "status": result.status,
+                    "status": result.status.value,
                     "reason": result.reason,
                     "stored_at": result.stored_at,
                     "blob_hash_match": result.blob_hash_match,

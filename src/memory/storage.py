@@ -282,7 +282,9 @@ class MemoryStorage:
         additional_chunks = []
         chunk_results = None
         if chunker_content_type is not None:
-            chunker = IntelligentChunker(max_chunk_tokens=512, overlap_pct=0.15)
+            chunker = IntelligentChunker(
+                max_chunk_tokens=512, overlap_pct=0.15, min_chunk_tokens=0
+            )
             chunk_results = chunker.chunk(
                 content, file_path=source_hook or "", content_type=chunker_content_type
             )
@@ -909,7 +911,9 @@ class MemoryStorage:
             original_size_tokens = len(content.split())
 
             if chunker_content_type is not None:
-                chunker = IntelligentChunker(max_chunk_tokens=512, overlap_pct=0.15)
+                chunker = IntelligentChunker(
+                    max_chunk_tokens=512, overlap_pct=0.15, min_chunk_tokens=0
+                )
                 chunk_results = chunker.chunk(
                     content, file_path="", content_type=chunker_content_type
                 )

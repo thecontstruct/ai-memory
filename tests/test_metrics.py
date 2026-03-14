@@ -357,6 +357,52 @@ def test_system_info_has_version_metadata():
     assert system_info._name == "aimemory_system"
 
 
+def test_freshness_metrics_defined():
+    """M-5/M-6: Freshness metrics should be defined in metrics.py (Spec §8.4)."""
+    from memory.metrics import (
+        freshness_scan_duration_seconds,
+        freshness_status,
+        freshness_total,
+    )
+
+    # freshness_status: Gauge with labels [status, project]
+    assert isinstance(freshness_status, Gauge)
+    assert freshness_status._name == "ai_memory_freshness_status"
+    assert freshness_status._labelnames == ("status", "project")
+
+    # freshness_total: Counter with labels [status, project]
+    # Note: prometheus_client Counter auto-strips _total suffix from _name
+    assert isinstance(freshness_total, Counter)
+    assert freshness_total._name == "ai_memory_freshness"
+    assert freshness_total._labelnames == ("status", "project")
+
+    # freshness_scan_duration_seconds: Histogram with labels [project]
+    assert isinstance(freshness_scan_duration_seconds, Histogram)
+    assert (
+        freshness_scan_duration_seconds._name
+        == "ai_memory_freshness_scan_duration_seconds"
+    )
+    assert freshness_scan_duration_seconds._labelnames == ("project",)
+
+
+def test_freshness_metric_names_match_spec():
+    """L-5: Metric names must match spec naming convention (ai_memory_ prefix, not aimemory_)."""
+    from memory.metrics import (
+        freshness_scan_duration_seconds,
+        freshness_status,
+        freshness_total,
+    )
+
+    # Spec §8.4 requires ai_memory_freshness_* naming
+    # Note: prometheus_client Counter auto-strips _total suffix from _name
+    assert freshness_status._name == "ai_memory_freshness_status"
+    assert freshness_total._name == "ai_memory_freshness"
+    assert (
+        freshness_scan_duration_seconds._name
+        == "ai_memory_freshness_scan_duration_seconds"
+    )
+
+
 def test_counter_can_increment_with_labels():
     """Test that counters can be incremented with proper labels."""
 

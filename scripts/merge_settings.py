@@ -336,7 +336,9 @@ def _normalize_session_start_matcher(settings: dict) -> dict:
                     matcher = wrapper.get("matcher", "")
                     if "startup" in matcher:
                         parts = [p for p in matcher.split("|") if p != "startup"]
-                        wrapper["matcher"] = "|".join(parts) if parts else "resume|compact"
+                        wrapper["matcher"] = (
+                            "|".join(parts) if parts else "resume|compact"
+                        )
     return settings
 
 

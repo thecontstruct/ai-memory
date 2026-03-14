@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.9-green?style=flat-square" alt="Version 2.0.9">
+  <img src="https://img.shields.io/badge/version-2.2.2-green?style=flat-square" alt="Version 2.2.2">
   <a href="https://github.com/Hidden-History/ai-memory/stargazers"><img src="https://img.shields.io/github/stars/Hidden-History/ai-memory?color=blue&style=flat-square" alt="Stars"></a>
   <a href="https://github.com/Hidden-History/ai-memory/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Hidden-History/ai-memory?style=flat-square" alt="License"></a>
   <a href="https://github.com/Hidden-History/ai-memory/issues"><img src="https://img.shields.io/github/issues/Hidden-History/ai-memory?color=red&style=flat-square" alt="Issues"></a>
@@ -115,8 +115,8 @@ AI-Memory combines capabilities that exist nowhere else as a single integrated s
 
 ## ✨ V2.0 Memory System
 
-- 🗂️ **Four Specialized Collections**: code-patterns (HOW), conventions (WHAT), discussions (WHY), jira-data (JIRA)
-- 🎯 **30 Memory Types**: Precise categorization for implementation, errors, decisions, Jira issues, GitHub data, agent memory, and more
+- 🗂️ **Five Specialized Collections**: code-patterns (HOW), conventions (WHAT), discussions (WHY), github (WHEN), jira-data (JIRA)
+- 🎯 **31 Memory Types**: Precise categorization for implementation, errors, decisions, Jira issues, GitHub data, agent memory, and more
 - ⚡ **6 Automatic Triggers**: Smart context injection when you need it most
 - 🔍 **Intent Detection**: Automatically routes queries to the right collection
 - 💬 **Conversation Memory**: Turn-by-turn capture with post-compaction context continuity
@@ -265,7 +265,7 @@ User: "Research best practices for writing commit messages"
 ```
 Claude Code Session
     ├── SessionStart Hooks (resume|compact) → Context injection on session resume and post-compaction
-    ├── UserPromptSubmit Hooks → Unified keyword trigger (decisions/best practices/session history)
+    ├── UserPromptSubmit Hooks → Tier 2 context injection (decisions/best practices/session history)
     ├── PreToolUse Hooks → Smart triggers (new file/first edit conventions)
     ├── PostToolUse Hooks → Capture code patterns + error detection
     ├── PreCompact Hook → Save conversation before compaction
@@ -299,7 +299,7 @@ Docker Services
         └── Trace Flush Worker
 ```
 
-**v2.0.6 additions**: GitHub sync service ingests repository data (PRs, issues, commits, code blobs) into the discussions collection. A 3-layer security scanning pipeline (regex + detect-secrets + SpaCy NER) screens all content before storage. Semantic decay scoring applies time-weighted relevance to all search queries. The Parzival session agent stores cross-session memory in the discussions collection for project continuity.
+**v2.0.6 additions**: GitHub sync service ingests repository data (PRs, issues, commits, code blobs) into the dedicated `github` collection. A 3-layer security scanning pipeline (regex + detect-secrets + SpaCy NER) screens all content before storage. Semantic decay scoring applies time-weighted relevance to all search queries. The Parzival session agent stores cross-session memory in the discussions collection for project continuity.
 
 **v2.0.7 additions**: Langfuse LLM observability stack provides full pipeline tracing. Hook scripts emit trace events to a file-based buffer (`trace_buffer.py`), and a dedicated flush worker (`trace_flush_worker.py`) batches events to Langfuse via the SDK. All 9 pipeline steps are instrumented as spans, grouped by session ID. The classifier worker emits `9_classify` spans with provider, confidence, and reclassification outcome.
 
@@ -307,9 +307,10 @@ Docker Services
 
 | Collection | Purpose | Example Types |
 |------------|---------|---------------|
-| **code-patterns** | HOW things are built | implementation, error_fix, refactor |
+| **code-patterns** | HOW things are built | implementation, error_pattern, file_pattern, refactor |
 | **conventions** | WHAT rules to follow | rule, guideline, naming, structure |
 | **discussions** | WHY things were decided | decision, session, preference, user_message, agent_response, blocker |
+| **github** | WHEN things changed | github_pr, github_issue, github_commit, github_ci_result, github_code_blob |
 | **jira-data** | External work items from Jira Cloud | jira_issue, jira_comment |
 
 > **Note:** The `jira-data` collection is conditional — it is only created when Jira sync is enabled (`JIRA_SYNC_ENABLED=true`).
@@ -726,6 +727,8 @@ Memories are automatically isolated by `group_id` (derived from project director
 - **code-patterns**: Implementation patterns (per-project isolation)
 - **conventions**: Coding standards and rules (shared across projects by default)
 - **discussions**: Decisions, sessions, conversations (per-project isolation)
+- **github**: GitHub PRs, issues, commits, CI results (per-project isolation)
+- **jira-data**: Jira issues and comments (per-project isolation, conditional)
 
 ## 🔧 Troubleshooting
 
@@ -923,7 +926,7 @@ python scripts/backup_qdrant.py
 
 Backups are stored in `backups/` directory with timestamped folders containing:
 
-- Collection snapshots (discussions, conventions, code-patterns)
+- Collection snapshots (code-patterns, conventions, discussions, github, jira-data)
 - Configuration files
 - Verification manifest
 

@@ -408,7 +408,7 @@ class TestAuditLogging:
                     point_id="test-id",
                     file_path="src/memory/test.py",
                     memory_type="pattern",
-                    status="fresh",
+                    status=FreshnessTier.FRESH,
                     reason="Test reason",
                     stored_at="2026-02-16T00:00:00Z",
                     blob_hash_match=None,
@@ -428,6 +428,9 @@ class TestAuditLogging:
                 entry = json.loads(line)
                 assert entry["point_id"] == "test-id"
                 assert entry["status"] == "fresh"
+                # L-6: Spec §4.5.5 requires "checked_at" not "timestamp"
+                assert "checked_at" in entry
+                assert "timestamp" not in entry
 
     def test_audit_log_dir_created(self):
         """Test .audit/logs/ created if missing."""
@@ -582,3 +585,251 @@ class TestIntegration:
             # Verify audit log was created
             log_path = Path(tmpdir) / ".audit" / "logs" / "freshness-log.jsonl"
             assert log_path.exists()
+
+
+class TestFreshnessStatusNormalization:
+    """Test case normalization of freshness_status values."""
+
+    def test_freshness_status_values_are_lowercase(self):
+        """FreshnessTier enum values should all be lowercase strings."""
+        for tier in FreshnessTier:
+            assert (
+                tier.value == tier.value.lower()
+            ), f"FreshnessTier.{tier.name} value '{tier.value}' is not lowercase"
+
+    def test_classify_returns_lowercase_status(self):
+        """classify_freshness should return lowercase status values."""
+        config = MemoryConfig(
+            freshness_commit_threshold_aging=3,
+            freshness_commit_threshold_stale=10,
+            freshness_commit_threshold_expired=25,
+        )
+        for commit_count, expected_tier in [
+            (0, FreshnessTier.FRESH),
+            (3, FreshnessTier.AGING),
+            (10, FreshnessTier.STALE),
+            (25, FreshnessTier.EXPIRED),
+        ]:
+            tier, _ = classify_freshness(None, commit_count, config)
+            assert tier == expected_tier
+            assert tier.value == tier.value.lower()
+
+
+class TestFreshnessPenaltyGatingInteraction:
+    """Test that penalty + gating interact correctly when all patterns are penalized."""
+
+    @patch("memory.freshness.get_qdrant_client")
+    def test_all_patterns_penalized_still_completes(self, mock_get_client):
+        """When all code-patterns have freshness_status=expired, scan should still complete."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        mock_blob = MagicMock()
+        mock_blob.payload = {
+            "file_path": "src/stale.py",
+            "blob_hash": "old_hash",
+            "last_commit_sha": "abc",
+            "last_synced": "2026-01-01T00:00:00Z",
+        }
+
+        mock_pattern = MagicMock()
+        mock_pattern.id = "stale-point"
+        mock_pattern.payload = {
+            "file_path": "src/stale.py",
+            "type": "pattern",
+            "stored_at": "2025-01-01T00:00:00Z",
+        }
+
+        # Many commits = expired
+        mock_commits = []
+        for i in range(30):
+            mc = MagicMock()
+            mc.payload = {
+                "timestamp": f"2025-06-{(i % 28) + 1:02d}T00:00:00Z",
+                "files_changed": ["src/stale.py"],
+            }
+            mock_commits.append(mc)
+
+        mock_client.scroll.side_effect = [
+            ([mock_blob], None),  # ground truth
+            ([mock_pattern], None),  # code-patterns
+            (mock_commits, None),  # commits
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = MemoryConfig(freshness_enabled=True, audit_dir=Path(".audit"))
+            report = run_freshness_scan(config=config, cwd=tmpdir)
+
+            assert report.total_checked == 1
+            assert report.expired_count == 1
+            assert report.fresh_count == 0
+
+
+class TestFreshnessMetricsPush:
+    """Test freshness metrics push after scan."""
+
+    @patch("memory.freshness.get_qdrant_client")
+    def test_freshness_metrics_push_called_after_scan(self, mock_get_client):
+        """run_freshness_scan should call push_freshness_metrics_async."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        mock_blob = MagicMock()
+        mock_blob.payload = {
+            "file_path": "src/test.py",
+            "blob_hash": "hash1",
+            "last_commit_sha": "sha1",
+            "last_synced": "2026-01-01T00:00:00Z",
+        }
+        mock_pattern = MagicMock()
+        mock_pattern.id = "p1"
+        mock_pattern.payload = {
+            "file_path": "src/test.py",
+            "type": "pattern",
+            "stored_at": "2026-01-01T00:00:00Z",
+        }
+
+        mock_client.scroll.side_effect = [
+            ([mock_blob], None),
+            ([mock_pattern], None),
+            ([], None),  # no commits
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = MemoryConfig(freshness_enabled=True, audit_dir=Path(".audit"))
+            with patch("memory.freshness.push_freshness_metrics_async") as mock_push:
+                report = run_freshness_scan(config=config, cwd=tmpdir)
+                assert report.total_checked == 1
+                # push_freshness_metrics_async should have been called
+                assert mock_push.called
+
+    @patch("memory.freshness.get_qdrant_client")
+    def test_freshness_metrics_push_receives_correct_counts(self, mock_get_client):
+        """push_freshness_metrics_async should be called with correct tier counts."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        mock_blob = MagicMock()
+        mock_blob.payload = {
+            "file_path": "src/test.py",
+            "blob_hash": "hash1",
+            "last_commit_sha": "sha1",
+            "last_synced": "2026-01-01T00:00:00Z",
+        }
+        mock_pattern = MagicMock()
+        mock_pattern.id = "p1"
+        mock_pattern.payload = {
+            "file_path": "src/test.py",
+            "type": "pattern",
+            "stored_at": "2026-01-01T00:00:00Z",
+        }
+
+        mock_client.scroll.side_effect = [
+            ([mock_blob], None),
+            ([mock_pattern], None),
+            ([], None),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = MemoryConfig(freshness_enabled=True, audit_dir=Path(".audit"))
+            with patch("memory.freshness.push_freshness_metrics_async") as mock_push:
+                report = run_freshness_scan(config=config, cwd=tmpdir)
+
+                assert report.total_checked == 1
+                assert report.fresh_count == 1
+                assert mock_push.called
+                call_kwargs = mock_push.call_args
+                assert call_kwargs.kwargs["fresh"] == 1
+                assert call_kwargs.kwargs["aging"] == 0
+
+
+class TestFreshnessLangfuseTraces:
+    """Test Langfuse trace emissions from freshness scan."""
+
+    @patch("memory.freshness.emit_trace_event")
+    @patch("memory.freshness.get_qdrant_client")
+    def test_freshness_scan_trace_name(self, mock_get_client, mock_emit):
+        """L-7: Langfuse trace should use event_type='freshness_scan' (not 'freshness_scan_complete')."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        mock_blob = MagicMock()
+        mock_blob.payload = {
+            "file_path": "src/test.py",
+            "blob_hash": "h1",
+            "last_commit_sha": "s1",
+            "last_synced": "2026-01-01T00:00:00Z",
+        }
+        mock_pattern = MagicMock()
+        mock_pattern.id = "p1"
+        mock_pattern.payload = {
+            "file_path": "src/test.py",
+            "type": "pattern",
+            "stored_at": "2026-01-01T00:00:00Z",
+        }
+
+        mock_client.scroll.side_effect = [
+            ([mock_blob], None),
+            ([mock_pattern], None),
+            ([], None),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = MemoryConfig(freshness_enabled=True, audit_dir=Path(".audit"))
+            run_freshness_scan(config=config, cwd=tmpdir)
+
+        # Check that emit_trace_event was called with correct event_type
+        trace_event_types = [
+            call.kwargs.get("event_type", call.args[0] if call.args else None)
+            for call in mock_emit.call_args_list
+        ]
+        # Should have freshness_scan_start and freshness_scan (not freshness_scan_complete)
+        assert (
+            "freshness_scan" in trace_event_types
+        ), f"Expected 'freshness_scan' trace event, got: {trace_event_types}"
+        assert (
+            "freshness_scan_complete" not in trace_event_types
+        ), "Old trace name 'freshness_scan_complete' should be renamed to 'freshness_scan'"
+
+    @patch("memory.freshness.emit_trace_event")
+    @patch("memory.freshness.get_qdrant_client")
+    def test_freshness_scan_tags_are_freshness(self, mock_get_client, mock_emit):
+        """L-10: Langfuse traces should use tags=['freshness'] not tags=['decay']."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        mock_blob = MagicMock()
+        mock_blob.payload = {
+            "file_path": "src/test.py",
+            "blob_hash": "h1",
+            "last_commit_sha": "s1",
+            "last_synced": "2026-01-01T00:00:00Z",
+        }
+        mock_pattern = MagicMock()
+        mock_pattern.id = "p1"
+        mock_pattern.payload = {
+            "file_path": "src/test.py",
+            "type": "pattern",
+            "stored_at": "2026-01-01T00:00:00Z",
+        }
+
+        mock_client.scroll.side_effect = [
+            ([mock_blob], None),
+            ([mock_pattern], None),
+            ([], None),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = MemoryConfig(freshness_enabled=True, audit_dir=Path(".audit"))
+            run_freshness_scan(config=config, cwd=tmpdir)
+
+        # Check that no calls use tags=["decay"]
+        for call in mock_emit.call_args_list:
+            tags = call.kwargs.get("tags", [])
+            assert (
+                "decay" not in tags
+            ), f"Tag 'decay' found — should be 'freshness'. Call: {call}"
+            if "freshness" in str(call):
+                assert (
+                    "freshness" in tags or tags == []
+                ), f"Expected tag 'freshness', got: {tags}"

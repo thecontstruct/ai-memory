@@ -38,7 +38,7 @@ class TestDecayFieldDefaults:
         """Type overrides have the full default string."""
         config = MemoryConfig(_env_file=None)
         overrides = config.get_decay_type_overrides()
-        assert len(overrides) == 12
+        assert len(overrides) == 13
         assert overrides["github_ci_result"] == 7
         assert overrides["github_code_blob"] == 14
         assert overrides["github_commit"] == 14
@@ -54,7 +54,7 @@ class TestDecayFieldDefaults:
         # CE-007: Verify phantom types were removed
         assert "conversation" not in overrides
         assert "session_summary" not in overrides
-        assert "architecture_decision" not in overrides
+        assert overrides["architecture_decision"] == 90
 
 
 class TestDecayFieldValidation:

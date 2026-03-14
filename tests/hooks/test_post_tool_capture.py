@@ -161,3 +161,93 @@ class TestPostToolCapture:
         assert "storage.py" in file_path
 
         # File path should be stored in payload for PreToolUse retrieval
+
+
+class TestWriteFixRestriction:
+    """M-3: Write fix detection must be restricted to FileNotFoundError only (§C4b)."""
+
+    @pytest.fixture(autouse=True)
+    def _import_module(self):
+        """Import detect_edit_write_fix from hook script."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "post_tool_capture",
+            Path(__file__).parent.parent.parent
+            / ".claude"
+            / "hooks"
+            / "scripts"
+            / "post_tool_capture.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.module = mod
+
+    def test_write_fix_source_only_matches_file_not_found(self):
+        """Write fix path must only trigger for FileNotFoundError."""
+        import inspect
+
+        source = inspect.getsource(self.module.detect_edit_write_fix)
+        # Must check for FileNotFoundError
+        assert "FileNotFoundError" in source
+        # Must NOT have a broad fallback that matches Write to any file
+        # The old code had an elif that matched any file — verify it's gone
+        lines = source.split("\n")
+        write_block_started = False
+        has_broad_fallback = False
+        for line in lines:
+            if 'tool_name == "Write"' in line:
+                write_block_started = True
+            if write_block_started and "elif error_file and" in line:
+                # This is the broad fallback — it should NOT exist
+                has_broad_fallback = True
+                break
+            if (
+                write_block_started
+                and "matched_errors" not in line
+                and line.strip().startswith("if ")
+            ):
+                break  # Moved past the Write block
+        assert not has_broad_fallback, (
+            "Write fix must NOT have broad fallback matching any file — "
+            "only FileNotFoundError per §C4b"
+        )
+
+    def test_write_fix_restricted_to_file_not_found_error(self):
+        """Write fix should only match FileNotFoundError (§C4b)."""
+        import inspect
+
+        source = inspect.getsource(self.module.detect_edit_write_fix)
+        assert (
+            "FileNotFoundError" in source
+        ), "Write fix should be restricted to FileNotFoundError (§C4b)"
+
+
+class TestHookExitCodesPostTool:
+    """H-4: post_tool_capture.py must always exit 0 (§1.2 Principle 4)."""
+
+    @pytest.fixture(autouse=True)
+    def _import_module(self):
+        """Import module."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "post_tool_capture",
+            Path(__file__).parent.parent.parent
+            / ".claude"
+            / "hooks"
+            / "scripts"
+            / "post_tool_capture.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.module = mod
+
+    def test_no_return_1_in_main(self):
+        """Verify no 'return 1' exists in main() function source code."""
+        import inspect
+
+        source = inspect.getsource(self.module.main)
+        assert (
+            "return 1" not in source
+        ), "main() must never return 1 — hooks must always exit 0 (§1.2 Principle 4)"

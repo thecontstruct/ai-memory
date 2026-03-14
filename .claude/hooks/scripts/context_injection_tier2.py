@@ -15,10 +15,12 @@ Exit Codes:
 
 Performance: <500ms total (NFR-P1, NFR-P5)
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
+import contextlib
 import json
 import logging
 import os
@@ -32,7 +34,12 @@ INSTALL_DIR = os.environ.get(
 )
 sys.path.insert(0, os.path.join(INSTALL_DIR, "src"))
 
-from memory.config import COLLECTION_CODE_PATTERNS, COLLECTION_DISCUSSIONS, get_config
+from memory.config import (
+    COLLECTION_CODE_PATTERNS,
+    COLLECTION_CONVENTIONS,
+    COLLECTION_DISCUSSIONS,
+    get_config,
+)
 from memory.health import check_qdrant_health
 
 # SPEC-021: Trace buffer for retrieval instrumentation
@@ -159,6 +166,10 @@ def main() -> int:
         # Load session state
         state = InjectionSessionState.load(session_id)
         state.turn_count += 1
+        # H-3: Clear cross-turn access_count dedup set at start of new turn
+        if state.turn_count != state._last_turn_count:
+            state.access_count_incremented_this_turn = []
+            state._last_turn_count = state.turn_count
 
         # Route to target collections
         target_collections = route_collections(prompt)
@@ -194,7 +205,12 @@ def main() -> int:
                 # (replaces Python post-filtering for efficiency).
                 # error_pattern excluded at Qdrant query layer instead of post-processing.
                 if route.collection == COLLECTION_CODE_PATTERNS:
-                    search_kwargs["must_not_types"] = ["error_pattern", "error_fix"]
+                    search_kwargs["must_not_types"] = ["error_pattern"]
+                    search_kwargs["exclude_expired_freshness"] = (
+                        True  # WP-2: Belt-and-suspenders pre-filter (Spec §4.5.3)
+                    )
+                # H-3: Pass cross-turn dedup list so access_count is incremented once per turn
+                search_kwargs["_access_count_dedup"] = state.access_count_incremented_this_turn
                 results = search_client.search(**search_kwargs)
                 for r in results:
                     r["collection"] = route.collection  # Tag with source collection
@@ -220,8 +236,12 @@ def main() -> int:
                                 "error": type(search_err).__name__,
                                 "results_considered": 0,
                                 "results_selected": 0,
-                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                "agent_name": os.environ.get(
+                                    "CLAUDE_AGENT_NAME", "main"
+                                ),
+                                "agent_role": os.environ.get(
+                                    "CLAUDE_AGENT_ROLE", "user"
+                                ),
                             },
                         },
                         span_id=_tier2_root_span_id,
@@ -240,23 +260,83 @@ def main() -> int:
         # Sort by score descending
         all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
 
-        # Soft confidence gate (3-tier: skip / soft / full)
+        # WP-2: Apply freshness penalty to code-patterns results (Spec §4.2.5, §4.5.3)
+        # Applied before gating — penalized scores affect both gating threshold and greedy selection
+        _freshness_blocked_count = 0
+        for _r in all_results:
+            if _r.get("collection") != COLLECTION_CODE_PATTERNS:
+                continue
+            _fs = (_r.get("freshness_status") or "unknown").lower()
+            _penalty = config.get_freshness_penalty(_fs)
+            if _penalty == 1.0:
+                continue
+            _orig_score = _r["score"]
+            _r["score"] = _r["score"] * _penalty
+            if emit_trace_event:
+                with contextlib.suppress(Exception):
+                    emit_trace_event(
+                        event_type="freshness_penalty_applied",
+                        data={
+                            "input": f"point_id={_r.get('id')} freshness_status={_fs}"[
+                                :TRACE_CONTENT_MAX
+                            ],
+                            "output": f"score {_orig_score:.4f} → {_r['score']:.4f} (penalty={_penalty})"[
+                                :TRACE_CONTENT_MAX
+                            ],
+                            "metadata": {
+                                "point_id": str(_r.get("id")),
+                                "freshness_status": _fs,
+                                "original_score": round(_orig_score, 4),
+                                "penalized_score": round(_r["score"], 4),
+                                "penalty_factor": _penalty,
+                            },
+                        },
+                        trace_id=_tier2_trace_id,
+                        session_id=session_id,
+                        project_id=project_name,
+                        tags=["freshness", "injection"],
+                    )
+            if _penalty == 0.0 and _orig_score > 0.0:
+                _freshness_blocked_count += 1
+
+        # Re-sort after penalty application (penalized scores may have changed relative order)
+        all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
+
+        # Soft confidence gate (4-tier: hard_skip / soft_skip / soft_gate / full)
         best_score = all_results[0].get("score", 0) if all_results else 0.0
 
-        _conf_threshold = config.injection_confidence_threshold
-        if best_score < _conf_threshold - 0.05:
-            gating_mode = "skip"
+        # WP-2: 4-tier per-collection gating (Spec §4.2.3)
+        _best_collection = all_results[0].get("collection") if all_results else None
+        _threshold_map = {
+            COLLECTION_CONVENTIONS: config.injection_threshold_conventions,
+            COLLECTION_CODE_PATTERNS: config.injection_threshold_code_patterns,
+            COLLECTION_DISCUSSIONS: config.injection_threshold_discussions,
+        }
+        _conf_threshold = _threshold_map.get(
+            _best_collection, config.injection_confidence_threshold
+        )
+
+        if best_score < config.injection_hard_floor:
+            gating_mode = "hard_skip"
+        elif best_score < _conf_threshold - 0.05:
+            gating_mode = "soft_skip"
         elif best_score < _conf_threshold:
-            gating_mode = "soft"
+            gating_mode = "soft_gate"
         else:
             gating_mode = "full"
 
-        if gating_mode == "skip":
+        if gating_mode in ("hard_skip", "soft_skip"):
             logger.info(
                 "tier2_confidence_skip",
                 extra={
                     "best_score": round(best_score, 4),
-                    "threshold": _conf_threshold - 0.05,
+                    # Log the actual threshold that triggered this gating mode:
+                    # hard_skip uses injection_hard_floor; soft_skip uses threshold-0.05
+                    "threshold": (
+                        config.injection_hard_floor
+                        if gating_mode == "hard_skip"
+                        else _conf_threshold - 0.05
+                    ),
                     "gating_mode": gating_mode,
                     "session_id": session_id,
                     "turn": state.turn_count,
@@ -301,7 +381,7 @@ def main() -> int:
         )
 
         # Soft gating: halve budget for marginal confidence (threshold-0.05 to threshold)
-        if gating_mode == "soft":
+        if gating_mode == "soft_gate":
             original_budget = budget
             budget = max(50, budget // 2)
             logger.info(
@@ -322,6 +402,18 @@ def main() -> int:
             excluded_ids=state.injected_point_ids,
             score_gap_threshold=config.injection_score_gap_threshold,
         )
+
+        # WP-2: Push freshness-blocked counter if any results were blocked this turn
+        if _freshness_blocked_count > 0:
+            try:
+                from memory.metrics_push import push_freshness_blocked_metrics_async
+
+                push_freshness_blocked_metrics_async(
+                    count=_freshness_blocked_count,
+                    project=project_name,
+                )
+            except Exception:
+                pass
 
         if not selected:
             logger.info(
@@ -489,6 +581,11 @@ def main() -> int:
                 success=False,
                 project=project_name,
             )
+        except Exception:
+            pass
+
+        try:
+            state.save()
         except Exception:
             pass
 

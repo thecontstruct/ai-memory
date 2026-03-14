@@ -1510,14 +1510,14 @@ def push_freshness_metrics_async(
                 "-c",
                 f"""
 import json, os
-from prometheus_client import CollectorRegistry, Gauge, Histogram, pushadd_to_gateway
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, pushadd_to_gateway
 
 data = json.loads({json.dumps(metrics_data)!r})
 registry = CollectorRegistry()
 
-# Freshness scan duration histogram
+# Freshness scan duration histogram (Spec §8.4)
 duration = Histogram(
-    "aimemory_freshness_scan_duration_seconds",
+    "ai_memory_freshness_scan_duration_seconds",
     "Freshness scan duration",
     ["project"],
     registry=registry,
@@ -1525,18 +1525,31 @@ duration = Histogram(
 )
 duration.labels(project=data["project"]).observe(data["duration_seconds"])
 
-# Freshness memories count gauge (by status)
-memories = Gauge(
-    "aimemory_freshness_memories_total",
+# Freshness status gauge — current snapshot per tier (Spec §8.4)
+status_gauge = Gauge(
+    "ai_memory_freshness_status",
     "Current count of memories by freshness tier",
     ["status", "project"],
     registry=registry
 )
-memories.labels(status="fresh", project=data["project"]).set(data["fresh"])
-memories.labels(status="aging", project=data["project"]).set(data["aging"])
-memories.labels(status="stale", project=data["project"]).set(data["stale"])
-memories.labels(status="expired", project=data["project"]).set(data["expired"])
-memories.labels(status="unknown", project=data["project"]).set(data["unknown"])
+status_gauge.labels(status="fresh", project=data["project"]).set(data["fresh"])
+status_gauge.labels(status="aging", project=data["project"]).set(data["aging"])
+status_gauge.labels(status="stale", project=data["project"]).set(data["stale"])
+status_gauge.labels(status="expired", project=data["project"]).set(data["expired"])
+status_gauge.labels(status="unknown", project=data["project"]).set(data["unknown"])
+
+# Freshness total counter — cumulative for trend analysis (Spec §8.4)
+total_counter = Counter(
+    "ai_memory_freshness_total",
+    "Cumulative freshness scan results for trend analysis",
+    ["status", "project"],
+    registry=registry
+)
+total_counter.labels(status="fresh", project=data["project"]).inc(data["fresh"])
+total_counter.labels(status="aging", project=data["project"]).inc(data["aging"])
+total_counter.labels(status="stale", project=data["project"]).inc(data["stale"])
+total_counter.labels(status="expired", project=data["project"]).inc(data["expired"])
+total_counter.labels(status="unknown", project=data["project"]).inc(data["unknown"])
 
 try:
     pushadd_to_gateway(
@@ -1562,6 +1575,72 @@ except Exception as e:
         logger.warning(
             "metrics_fork_failed",
             extra={"error": str(e), "metric": "freshness"},
+        )
+
+
+def push_freshness_blocked_metrics_async(
+    count: int,
+    project: str = "unknown",
+) -> None:
+    """Push freshness-blocked injection counter asynchronously (fire-and-forget).
+
+    Emitted from context_injection_tier2.py when STALE/EXPIRED code-patterns
+    are blocked from injection by the freshness penalty gate (WP-2, Spec §4.5.3).
+
+    Args:
+        count: Number of results blocked by freshness penalty in this turn.
+        project: Project name.
+    """
+    if not PUSHGATEWAY_ENABLED:
+        return
+
+    project = _validate_label(project, "project")
+
+    try:
+        metrics_data = {"count": count, "project": project}
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                f"""
+import json, os
+from prometheus_client import CollectorRegistry, Counter, pushadd_to_gateway
+
+data = json.loads({json.dumps(metrics_data)!r})
+registry = CollectorRegistry()
+
+blocked = Counter(
+    "ai_memory_freshness_blocked_injections_total",
+    "Total code-pattern results blocked from injection due to STALE/EXPIRED freshness status",
+    ["project"],
+    registry=registry
+)
+blocked.labels(project=data["project"]).inc(data["count"])
+
+try:
+    pushadd_to_gateway(
+        os.getenv("PUSHGATEWAY_URL", "localhost:29091"),
+        job="ai_memory_hooks",
+        grouping_key={{"instance": "freshness_blocked"}},
+        registry=registry,
+        timeout=0.5
+    )
+except Exception as e:
+    import logging
+    logging.getLogger("ai_memory.metrics").warning(
+        "pushgateway_async_failed",
+        extra={{"error": str(e), "metric": "freshness_blocked"}}
+    )
+""",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as e:
+        logger.warning(
+            "metrics_fork_failed",
+            extra={"error": str(e), "metric": "freshness_blocked"},
         )
 
 

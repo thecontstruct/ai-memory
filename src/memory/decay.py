@@ -291,6 +291,38 @@ def build_decay_formula(
     semantic_w = config.decay_semantic_weight
     temporal_w = 1.0 - semantic_w
 
+    # Remembrance Protection (PLAN-015 §5.3): bypass decay for frequently accessed memories
+    # access_count >= 3 → temporal_score = 1.0 (protected from decay)
+    # access_count < 3 or missing → normal decay formula applies
+    # Missing access_count payload field is treated as 0 (via defaults={"access_count": 0})
+    #
+    # Formula structure using Qdrant's condition-as-multiplier pattern:
+    #   protected_branch = mult([FieldCondition(access_count >= 3), 1.0])  → 1.0 when protected
+    #   decay_branch     = mult([FieldCondition(access_count < 3), decay_sum])  → decay when not
+    #   temporal_score   = sum([protected_branch, decay_branch])
+    # Exactly one branch activates per point (defaults ensure missing = 0).
+    protected_branch = models.MultExpression(
+        mult=[
+            models.FieldCondition(
+                key="access_count",
+                range=models.Range(gte=3.0),
+            ),
+            1.0,
+        ]
+    )
+    unprotected_branch = models.MultExpression(
+        mult=[
+            models.FieldCondition(
+                key="access_count",
+                range=models.Range(lt=3.0),
+            ),
+            models.SumExpression(sum=decay_branches),
+        ]
+    )
+    temporal_score_expr = models.SumExpression(
+        sum=[protected_branch, unprotected_branch]
+    )
+
     formula = models.FormulaQuery(
         formula=models.SumExpression(
             sum=[
@@ -298,13 +330,14 @@ def build_decay_formula(
                 models.MultExpression(
                     mult=[
                         temporal_w,
-                        models.SumExpression(sum=decay_branches),
+                        temporal_score_expr,
                     ]
                 ),
             ]
         ),
         # Fallback for points missing stored_at — arbitrary old date ensures very low temporal score
-        defaults={"stored_at": "2020-01-01T00:00:00Z"},
+        # access_count default = 0 ensures missing field treated as unprotected (PLAN-015 §5.3)
+        defaults={"stored_at": "2020-01-01T00:00:00Z", "access_count": 0},
     )
 
     # Langfuse trace: decay formula construction (includes G-09 summary fields)
@@ -316,7 +349,7 @@ def build_decay_formula(
                     "input": f"Building decay formula for {collection} (decay_enabled={config.decay_enabled}, semantic_weight={config.decay_semantic_weight})"[
                         :TRACE_CONTENT_MAX
                     ],
-                    "output": f"Formula built: {len(half_life_groups)} type overrides, default_hl={default_hl_days}d, prefetch_limit={prefetch_limit}"[
+                    "output": f"Formula built: {len(half_life_groups)} type overrides, default_hl={default_hl_days}d, prefetch_limit={prefetch_limit}, remembrance_protection=enabled"[
                         :TRACE_CONTENT_MAX
                     ],
                     "metadata": {

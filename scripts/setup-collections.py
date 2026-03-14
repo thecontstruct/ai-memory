@@ -99,7 +99,9 @@ def create_collections(dry_run: bool = False, force: bool = False) -> None:
                 hnsw_config=HnswConfigDiff(m=0),  # Disable HNSW for reranking-only
             ),
         }
-        print("ColBERT reranking enabled — adding 'colbert' named vector to collections")
+        print(
+            "ColBERT reranking enabled — adding 'colbert' named vector to collections"
+        )
 
     # V2.0 Collections (Memory System Spec v2.0, 2026-01-17)
     collection_names = [
@@ -162,7 +164,9 @@ def create_collections(dry_run: bool = False, force: bool = False) -> None:
 
             # Use ColBERT dict (with default "" + "colbert") when enabled,
             # otherwise use the single VectorParams (unnamed default)
-            effective_vectors_config = vectors_config_dict if colbert_enabled else vector_config
+            effective_vectors_config = (
+                vectors_config_dict if colbert_enabled else vector_config
+            )
 
             client.create_collection(
                 collection_name=collection_name,

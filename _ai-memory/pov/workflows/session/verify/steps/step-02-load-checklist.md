@@ -2,9 +2,9 @@
 name: 'step-02-load-checklist'
 description: 'Load the appropriate verification checklist template based on the selected type'
 nextStepFile: './step-03-execute-checks.md'
-storyTemplate: '{project-root}/_ai-memory/pov/templates/verification-story.template.md'
-codeTemplate: '{project-root}/_ai-memory/pov/templates/verification-code.template.md'
-productionTemplate: '{project-root}/_ai-memory/pov/templates/verification-production.template.md'
+storyTemplate: '{project-root}/templates/oversight/verification/checklists/story-complete.md'
+codeTemplate: '{project-root}/templates/oversight/verification/checklists/code-review.md'
+productionTemplate: '{project-root}/templates/oversight/verification/checklists/production-ready.md'
 ---
 
 # Step 2: Load Verification Checklist
@@ -23,15 +23,22 @@ Load the appropriate verification checklist template so that all checks are defi
 
 ## MANDATORY SEQUENCE
 
-### 1. Load Template Based on Type
+### 1. Load Checklist Based on Type
 
-| Verification Type | Template Path |
-|-------------------|---------------|
-| Story | `{storyTemplate}` |
-| Code | `{codeTemplate}` |
-| Production | `{productionTemplate}` |
+Use a two-tier lookup: project-specific checklist first, framework template as fallback.
 
-Read the selected template file in full.
+| Verification Type | Project Checklist (try first) | Framework Fallback |
+|---|---|---|
+| Story | `{oversight_path}/verification/checklists/story-complete.md` | `{storyTemplate}` |
+| Code | `{oversight_path}/verification/checklists/code-review.md` | `{codeTemplate}` |
+| Production | `{oversight_path}/verification/checklists/production-ready.md` | `{productionTemplate}` |
+
+1. Try to read the project checklist from `{oversight_path}/verification/checklists/`
+2. If it exists — use it. Project checklists take priority over framework templates.
+3. If it does not exist — load the framework template from `{project-root}/templates/oversight/verification/checklists/`
+4. If neither exists — use the inline fallback checklist defined below in this step file.
+
+Read the selected checklist in full before proceeding.
 
 ### 2. Handle Missing Template
 

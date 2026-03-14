@@ -73,7 +73,7 @@ class TestIntelligentChunker:
 
     def test_init_default_params(self):
         chunker = IntelligentChunker()
-        assert chunker.max_chunk_tokens == 512
+        assert chunker.max_chunk_tokens == 1024
         assert chunker.overlap_pct == 0.15
 
     def test_init_custom_params(self):
@@ -88,7 +88,7 @@ class TestIntelligentChunker:
 
     def test_chunk_single_result_for_small_content(self):
         """v2.1 MVP: Returns single chunk for all content."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         results = chunker.chunk("def foo(): pass", "test.py")
         assert len(results) == 1
         assert isinstance(results[0], ChunkResult)
@@ -99,7 +99,7 @@ class TestIntelligentChunker:
         Note: Python files now use AST chunking if tree-sitter is available.
         After TECH-DEBT-052 fix, first chunk has overlap_tokens based on 20% calculation.
         """
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         results = chunker.chunk("def foo(): pass", "test.py")
         chunk = results[0]
 
@@ -465,7 +465,7 @@ class TestIntelligentChunkerIntegration:
 
     def test_routes_python_to_ast_chunker(self):
         """Python files should be routed to AST chunker."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         code = """def foo():
     return "hello"
 
@@ -480,7 +480,7 @@ def bar():
 
     def test_routes_markdown_to_prose_chunker(self):
         """Markdown files should use ProseChunker (BUG-049 fix)."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "# Title\n\nSome content"
         chunks = chunker.chunk(content, "README.md")
 
@@ -492,7 +492,7 @@ def bar():
         """IntelligentChunker should work even if AST chunker unavailable."""
         # This is implicitly tested by the existing whole-content tests
         # They pass whether or not tree-sitter is installed
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         code = "def foo(): pass"
 
         # Should not crash, should return chunks (AST or whole)
@@ -505,7 +505,7 @@ class TestProseChunkerIntegration:
 
     def test_routes_markdown_to_prose_chunker(self):
         """Markdown (.md) files should be routed to ProseChunker."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "# Title\n\nThis is paragraph one.\n\nThis is paragraph two."
         chunks = chunker.chunk(content, "README.md")
 
@@ -514,7 +514,7 @@ class TestProseChunkerIntegration:
 
     def test_routes_txt_to_prose_chunker(self):
         """Text (.txt) files should be routed to ProseChunker."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "Some plain text content."
         chunks = chunker.chunk(content, "notes.txt")
 
@@ -523,7 +523,7 @@ class TestProseChunkerIntegration:
 
     def test_routes_rst_to_prose_chunker(self):
         """RST (.rst) files should be routed to ProseChunker."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "Title\n=====\n\nSome reStructuredText content."
         chunks = chunker.chunk(content, "docs.rst")
 
@@ -546,7 +546,7 @@ class TestProseChunkerIntegration:
 
     def test_prose_chunks_have_correct_metadata(self):
         """Prose chunks should have complete metadata."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "Test content for metadata verification."
         chunks = chunker.chunk(content, "test.md")
 
@@ -559,7 +559,7 @@ class TestProseChunkerIntegration:
 
     def test_prose_small_content_single_chunk(self):
         """Small prose content returns single chunk."""
-        chunker = IntelligentChunker()
+        chunker = IntelligentChunker(min_chunk_tokens=0)
         content = "Short text."
         chunks = chunker.chunk(content, "short.md")
 
@@ -570,10 +570,11 @@ class TestProseChunkerIntegration:
         """Multiple prose chunks should have overlap for context."""
         chunker = IntelligentChunker(max_chunk_tokens=128)  # Force smaller chunks
 
-        # Create paragraph-separated content
-        para1 = "First paragraph " * 20
-        para2 = "Second paragraph " * 20
-        para3 = "Third paragraph " * 20
+        # Create paragraph-separated content large enough to exceed ProseChunker's
+        # 2048-char limit (512 tokens * 4 chars/token), forcing paragraph splitting
+        para1 = "First paragraph " * 50
+        para2 = "Second paragraph " * 50
+        para3 = "Third paragraph " * 50
         content = f"{para1}\n\n{para2}\n\n{para3}"
 
         chunks = chunker.chunk(content, "multi_para.md")
@@ -885,3 +886,40 @@ def standalone():
 """
         chunks = chunker.chunk(code, "test.py")
         assert "# No imports in this file" in chunks[0].content
+
+
+class TestOverlapDefaultMatchesSpec:
+    """M-8: Verify IntelligentChunker default overlap_pct matches spec §4 (15% prose)."""
+
+    def test_default_overlap_pct_is_015(self):
+        """Default overlap_pct must be 0.15 per spec §4 'Prose overlap 15%'."""
+        chunker = IntelligentChunker()
+        assert (
+            chunker.overlap_pct == 0.15
+        ), f"Default overlap_pct is {chunker.overlap_pct}, spec §4 requires 0.15"
+
+    def test_prose_chunker_receives_overlap(self):
+        """ProseChunker should receive the configured overlap_pct."""
+        chunker = IntelligentChunker(overlap_pct=0.20)
+        assert chunker._prose_chunker.config.overlap_ratio == 0.20
+
+
+class TestChunkedEmbeddingEndpoint:
+    """H-2: Basic test for /embed/chunked endpoint contract (chunked embedding)."""
+
+    def test_embed_with_late_chunking_method_exists(self):
+        """EmbeddingClient should have embed_with_late_chunking method."""
+        from src.memory.embeddings import EmbeddingClient
+
+        assert hasattr(EmbeddingClient, "embed_with_late_chunking")
+
+    def test_embed_with_late_chunking_signature(self):
+        """embed_with_late_chunking should accept document + chunk_offsets."""
+        import inspect
+
+        from src.memory.embeddings import EmbeddingClient
+
+        sig = inspect.signature(EmbeddingClient.embed_with_late_chunking)
+        params = list(sig.parameters.keys())
+        assert "document" in params
+        assert "chunk_offsets" in params

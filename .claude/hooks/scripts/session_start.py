@@ -10,6 +10,7 @@ Best Practices (2026):
 - https://python-client.qdrant.tech/ (Qdrant Python Client 1.16+)
 - https://signoz.io/guides/python-logging-best-practices/ (Structured Logging 2025)
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -392,181 +393,19 @@ def inject_with_priority(
     return "\n".join(result)
 
 
-def retrieve_session_summaries(
-    client, project_name: str, limit: int = 20
-) -> list[dict]:
-    """Retrieve session summaries from discussions collection.
+def _detect_agent_id() -> str:
+    """Detect agent ID from environment variables.
 
-    Extracts shared retrieval logic used by both get_conversation_context()
-    and main() to avoid code duplication (TECH-DEBT-047 fix).
-
-    Args:
-        client: Qdrant client instance
-        project_name: Project group_id for filtering
-        limit: Max summaries to retrieve (default 20, then sorted/sliced)
-
-    Returns:
-        List of summary dicts sorted by timestamp (most recent first).
-        Returns empty list if no summaries found or on error.
+    Detection chain: PARZIVAL_AGENT_ID > AI_MEMORY_AGENT_ID > BMAD_AGENT_NAME > "default"
+    Used for agent-scoped memory retrieval on compact (PLAN-015 §4.1).
     """
-    from qdrant_client.models import FieldCondition, Filter, MatchValue
-
-    from memory.config import TYPE_SESSION
-
-    try:
-        summary_filter = Filter(
-            must=[
-                FieldCondition(key="group_id", match=MatchValue(value=project_name)),
-                FieldCondition(key="type", match=MatchValue(value=TYPE_SESSION)),
-            ]
-        )
-
-        summary_results = client.scroll(
-            collection_name=COLLECTION_DISCUSSIONS,
-            scroll_filter=summary_filter,
-            limit=limit,
-            with_payload=True,
-            with_vectors=False,
-            timeout=2,  # 2s timeout to stay within <3s SLA
-        )
-
-        if not summary_results[0]:
-            return []
-
-        summaries = []
-        for point in summary_results[0]:
-            payload = point.payload
-            summaries.append(
-                {
-                    "content": payload.get("content", ""),
-                    "timestamp": payload.get(
-                        "created_at", payload.get("timestamp", "")
-                    ),
-                    "type": payload.get("type", "session"),
-                    "first_user_prompt": payload.get("first_user_prompt", ""),
-                    "last_user_prompts": payload.get("last_user_prompts", []),
-                    "last_agent_responses": payload.get("last_agent_responses", []),
-                    "session_metadata": payload.get("session_metadata", {}),
-                }
-            )
-
-        # Sort by timestamp descending (most recent first)
-        summaries.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
-        return summaries
-
-    except Exception as e:
-        logger.warning(
-            "retrieve_session_summaries_failed",
-            extra={"project_name": project_name, "error": str(e)},
-        )
-        return []
-
-
-def get_conversation_context(
-    config, session_id: str, project_name: str, limit: int = 3
-) -> str:
-    """Retrieve rich session summaries for post-compaction context injection.
-
-    V2.1 Simplified Architecture:
-    - Only queries session summaries (type=session) from discussions collection
-    - Rich summaries contain: first_user_prompt, last_user_prompts, last_agent_responses
-    - No need to query individual user_message/agent_response records
-    - Supports both resume and compact triggers
-
-    Args:
-        config: MemoryConfig instance with connection settings
-        session_id: Current session identifier
-        project_name: Current project name (group_id) for filtering
-        limit: Maximum session summaries to retrieve (default 3)
-
-    Returns:
-        Formatted markdown string with session context,
-        or empty string if no summaries found.
-
-    Token Budget: ~4000 tokens default (per BP-039), configurable via config.token_budget
-    """
-    try:
-        client = get_qdrant_client(config)
-
-        # Use shared retrieval helper (TECH-DEBT-047 refactor)
-        summaries = retrieve_session_summaries(client, project_name, limit=20)
-
-        if not summaries:
-            return ""
-
-        # Take only the requested limit
-        recent_summaries = summaries[:limit]
-
-        if not recent_summaries:
-            return ""
-
-        lines = []
-
-        # Format each summary with its rich context
-        lines.append("## Session Summaries\n")
-
-        for summary in recent_summaries:
-            content = summary.get("content", "")
-            timestamp = summary.get("timestamp", "")
-
-            # Extract time from ISO timestamp
-            time_str = ""
-            if timestamp:
-                try:
-                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                    time_str = dt.strftime("%H:%M")
-                except (ValueError, AttributeError):
-                    time_str = ""
-
-            prefix = f"**Summary [{time_str}]:**" if time_str else "**Summary:**"
-            lines.append(f"{prefix} {content}\n")
-
-        # V2.1: Extract rich context from most recent summary
-        most_recent = recent_summaries[0] if recent_summaries else {}
-
-        # Add recent user messages from the rich summary
-        last_user_prompts = most_recent.get("last_user_prompts", [])
-        if last_user_prompts:
-            lines.append("\n## Recent User Messages\n")
-            for prompt_data in last_user_prompts:
-                content = (
-                    prompt_data.get("content", "")
-                    if isinstance(prompt_data, dict)
-                    else str(prompt_data)
-                )
-                # Filter and truncate
-                filtered_content = filter_low_value_content(content)
-                if filtered_content.strip():
-                    if len(filtered_content) > 2000:
-                        filtered_content = smart_truncate(filtered_content, 2000)
-                    lines.append(f"**User:** {filtered_content}\n")
-
-        # Add recent agent responses from the rich summary
-        last_agent_responses = most_recent.get("last_agent_responses", [])
-        if last_agent_responses:
-            lines.append("\n## Agent Context Summary\n")
-            for response_data in last_agent_responses:
-                content = (
-                    response_data.get("content", "")
-                    if isinstance(response_data, dict)
-                    else str(response_data)
-                )
-                # Filter and truncate agent responses more aggressively
-                filtered_content = filter_low_value_content(content)
-                if filtered_content.strip():
-                    if len(filtered_content) > 500:
-                        filtered_content = smart_truncate(filtered_content, 500)
-                    lines.append(f"**Agent:** {filtered_content}\n")
-
-        return "\n".join(lines)
-
-    except Exception as e:
-        # Graceful degradation - conversation context is optional
-        logger.warning(
-            "conversation_context_failed",
-            extra={"session_id": session_id, "error": str(e)},
-        )
-        return ""
+    _raw = (
+        os.environ.get("PARZIVAL_AGENT_ID")
+        or os.environ.get("AI_MEMORY_AGENT_ID")
+        or os.environ.get("BMAD_AGENT_NAME")
+        or "default"
+    )
+    return _raw.strip() or "default"
 
 
 def cleanup_dedup_lock(lock_path: str) -> None:
@@ -597,9 +436,7 @@ def main():
             # Extract context
             cwd = hook_input.get("cwd", os.getcwd())
             session_id = hook_input.get("session_id", "unknown")
-            trigger = hook_input.get(
-                "source", "unknown"
-            )  # resume, compact, clear
+            trigger = hook_input.get("source", "unknown")  # resume, compact, clear
             project_name = detect_project(cwd)  # FR13 - automatic project detection
 
             # BUG-020: Deduplication lock to prevent double execution
@@ -637,8 +474,12 @@ def main():
                                             "lock_age_seconds": round(lock_age, 2),
                                             "results_considered": 0,
                                             "results_selected": 0,
-                                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                            "agent_name": os.environ.get(
+                                                "CLAUDE_AGENT_NAME", "main"
+                                            ),
+                                            "agent_role": os.environ.get(
+                                                "CLAUDE_AGENT_ROLE", "user"
+                                            ),
                                         },
                                     },
                                     session_id=session_id,
@@ -724,8 +565,12 @@ def main():
                                     "tokens_injected": 0,
                                     "budget": config.token_budget,
                                     "summary": "Resume: no injection per DEC-054",
-                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                    "agent_name": os.environ.get(
+                                        "CLAUDE_AGENT_NAME", "main"
+                                    ),
+                                    "agent_role": os.environ.get(
+                                        "CLAUDE_AGENT_ROLE", "user"
+                                    ),
                                 },
                             },
                             span_id=_resume_root_span_id,
@@ -773,8 +618,12 @@ def main():
                                     "error": "qdrant_unavailable",
                                     "results_considered": 0,
                                     "results_selected": 0,
-                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                    "agent_name": os.environ.get(
+                                        "CLAUDE_AGENT_NAME", "main"
+                                    ),
+                                    "agent_role": os.environ.get(
+                                        "CLAUDE_AGENT_ROLE", "user"
+                                    ),
                                 },
                             },
                             session_id=session_id,
@@ -808,9 +657,9 @@ def main():
 
             if trigger == "clear":
                 # User wants fresh start — delete injection state and skip injection
-                from pathlib import Path
+                from memory.injection import InjectionSessionState
 
-                state_path = Path(f"/tmp/ai-memory-{session_id}-injection-state.json")
+                state_path = InjectionSessionState._state_path(session_id)
                 state_path.unlink(missing_ok=True)
 
                 duration_ms = (time.perf_counter() - start_time) * 1000
@@ -883,27 +732,36 @@ def main():
                             collection=COLLECTION_DISCUSSIONS,
                             group_id=project_name,
                             memory_type=["session"],
+                            agent_id="parzival",
                             limit=3,
                         )
                         session_summaries = []
                         for r in session_summary_results:
-                            session_summaries.append({
-                                "content": r.get("content", ""),
-                                "timestamp": r.get("created_at", r.get("timestamp", "")),
-                                "type": r.get("type", "session"),
-                                "first_user_prompt": r.get("first_user_prompt", ""),
-                                "last_user_prompts": r.get("last_user_prompts", []),
-                                "last_agent_responses": r.get("last_agent_responses", []),
-                                "session_metadata": r.get("session_metadata", {}),
-                            })
+                            session_summaries.append(
+                                {
+                                    "content": r.get("content", ""),
+                                    "timestamp": r.get(
+                                        "created_at", r.get("timestamp", "")
+                                    ),
+                                    "type": r.get("type", "session"),
+                                    "first_user_prompt": r.get("first_user_prompt", ""),
+                                    "last_user_prompts": r.get("last_user_prompts", []),
+                                    "last_agent_responses": r.get(
+                                        "last_agent_responses", []
+                                    ),
+                                    "session_metadata": r.get("session_metadata", {}),
+                                }
+                            )
                         # TD-228: Trace event for Parzival session summaries retrieval
                         if emit_trace_event:
                             try:
-                                _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
+                                _retrieval_ms = (
+                                    time.perf_counter() - _retrieval_start
+                                ) * 1000
                                 emit_trace_event(
                                     event_type="memory_retrieval_session_summaries",
                                     data={
-                                        "input": f"get_recent(discussions, type=session, limit=3) for {project_name}",
+                                        "input": f"get_recent(discussions, type=session, agent_id=parzival, limit=3) for {project_name}",
                                         "output": f"Retrieved {len(session_summaries)} session summaries",
                                         "metadata": {
                                             "trigger": trigger,
@@ -913,8 +771,12 @@ def main():
                                             "result_count": len(session_summaries),
                                             "retrieval_ms": round(_retrieval_ms, 2),
                                             "parzival_enabled": True,
-                                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                            "agent_name": os.environ.get(
+                                                "CLAUDE_AGENT_NAME", "main"
+                                            ),
+                                            "agent_role": os.environ.get(
+                                                "CLAUDE_AGENT_ROLE", "user"
+                                            ),
                                         },
                                     },
                                     session_id=session_id,
@@ -943,6 +805,7 @@ def main():
                             collection=COLLECTION_DISCUSSIONS,
                             group_id=project_name,
                             memory_type=["decision"],
+                            agent_id="parzival",
                             limit=5,
                         )
                         other_memories.extend(decisions)
@@ -950,11 +813,13 @@ def main():
                         # TD-228: Trace event for Parzival decisions retrieval
                         if emit_trace_event:
                             try:
-                                _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
+                                _retrieval_ms = (
+                                    time.perf_counter() - _retrieval_start
+                                ) * 1000
                                 emit_trace_event(
                                     event_type="memory_retrieval_decisions",
                                     data={
-                                        "input": f"get_recent(discussions, type=decision, limit=5) for {project_name}",
+                                        "input": f"get_recent(discussions, type=decision, agent_id=parzival, limit=5) for {project_name}",
                                         "output": f"Retrieved {len(decisions)} decisions",
                                         "metadata": {
                                             "trigger": trigger,
@@ -964,8 +829,12 @@ def main():
                                             "result_count": len(decisions),
                                             "retrieval_ms": round(_retrieval_ms, 2),
                                             "parzival_enabled": True,
-                                            "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                            "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                            "agent_name": os.environ.get(
+                                                "CLAUDE_AGENT_NAME", "main"
+                                            ),
+                                            "agent_role": os.environ.get(
+                                                "CLAUDE_AGENT_ROLE", "user"
+                                            ),
                                         },
                                     },
                                     session_id=session_id,
@@ -986,6 +855,7 @@ def main():
                 # Ensures behavioral constraints survive context compaction
                 try:
                     from memory.injection import load_parzival_constraints
+
                     _constraints = load_parzival_constraints(os.getcwd())
                     if _constraints:
                         _parzival_constraints_context = f"\n\n{_constraints}"
@@ -994,49 +864,118 @@ def main():
                 except Exception:
                     _parzival_constraints_context = ""
 
+                # Clear injected point dedup state after compact
+                try:
+                    from memory.injection import InjectionSessionState
+
+                    _parz_compact_state = InjectionSessionState.load(session_id)
+                    _parz_compact_state.reset_after_compact()
+                    _parz_compact_state.save()
+                except Exception:
+                    pass  # Non-fatal: dedup state clearing is best-effort
+
             else:
-                # NON-PARZIVAL PATH: Rich session summary ONLY (DEC-055)
+                # NON-PARZIVAL PATH: Agent-scoped compact restore (PLAN-015 §4.1, DEC-055)
+                from memory.injection import InjectionSessionState
                 from memory.search import MemorySearch
+
+                # Detect agent identity for scoped retrieval
+                _compact_agent_id = _detect_agent_id()
+
+                # Load state to determine summary count (1st compact = 1, 2nd+ = 2)
+                _compact_state = InjectionSessionState.load(session_id)
+                _summary_limit = 1 if _compact_state.compact_count == 0 else 2
+
+                # Defensive initialization — ensures variables are always defined
+                # even if the try block fails partway through (Fix 4)
+                session_summaries = []
+                decisions = []
 
                 searcher = MemorySearch(config)
                 try:
                     _retrieval_start = time.perf_counter()
-                    session_summary_results = searcher.get_recent(
-                        collection=COLLECTION_DISCUSSIONS,
-                        group_id=project_name,
-                        memory_type=["session"],
-                        limit=1,
-                    )
+
+                    # Build get_recent kwargs — add agent_id filter for named agents
+                    _summary_kwargs: dict = {
+                        "collection": COLLECTION_DISCUSSIONS,
+                        "group_id": project_name,
+                        "memory_type": ["session"],
+                        "limit": _summary_limit,
+                    }
+                    if _compact_agent_id not in ("default", "parzival"):
+                        _summary_kwargs["agent_id"] = _compact_agent_id
+
+                    session_summary_results = searcher.get_recent(**_summary_kwargs)
                     session_summaries = []
                     for r in session_summary_results:
-                        session_summaries.append({
-                            "content": r.get("content", ""),
-                            "timestamp": r.get("created_at", r.get("timestamp", "")),
-                            "type": r.get("type", "session"),
-                            "first_user_prompt": r.get("first_user_prompt", ""),
-                            "last_user_prompts": r.get("last_user_prompts", []),
-                            "last_agent_responses": r.get("last_agent_responses", []),
-                            "session_metadata": r.get("session_metadata", {}),
-                        })
-                    # TD-228: Trace event for non-Parzival session summaries retrieval
+                        session_summaries.append(
+                            {
+                                "content": r.get("content", ""),
+                                "timestamp": r.get(
+                                    "created_at", r.get("timestamp", "")
+                                ),
+                                "type": r.get("type", "session"),
+                                "first_user_prompt": r.get("first_user_prompt", ""),
+                                "last_user_prompts": r.get("last_user_prompts", []),
+                                "last_agent_responses": r.get(
+                                    "last_agent_responses", []
+                                ),
+                                "session_metadata": r.get("session_metadata", {}),
+                            }
+                        )
+
+                    # Retrieve decisions (PLAN-015 §4.1 — non-Parzival gets max 3)
+                    _decision_kwargs: dict = {
+                        "collection": COLLECTION_DISCUSSIONS,
+                        "group_id": project_name,
+                        "memory_type": ["decision"],
+                        "limit": 3,
+                    }
+                    if _compact_agent_id not in ("default", "parzival"):
+                        _decision_kwargs["agent_id"] = _compact_agent_id
+
+                    try:
+                        _decision_results = searcher.get_recent(**_decision_kwargs)
+                        decisions = []
+                        for r in _decision_results:
+                            decisions.append(
+                                {
+                                    "content": r.get("content", ""),
+                                    "timestamp": r.get(
+                                        "created_at", r.get("timestamp", "")
+                                    ),
+                                    "type": r.get("type", "decision"),
+                                    "score": r.get("score", 0.0),
+                                }
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "compact_decisions_retrieval_failed",
+                            extra={"session_id": session_id, "error": str(e)},
+                        )
+                        decisions = []
+
+                    _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
+
+                    # TD-228 compatible trace event
                     if emit_trace_event:
                         try:
-                            _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
                             emit_trace_event(
                                 event_type="memory_retrieval_session_summaries",
                                 data={
-                                    "input": f"get_recent(discussions, type=session, limit=1) for {project_name}",
-                                    "output": f"Retrieved {len(session_summaries)} session summaries (DEC-055: compact summary only)",
+                                    "input": f"compact restore for agent={_compact_agent_id}, limit={_summary_limit}",
+                                    "output": f"Retrieved {len(session_summaries)} summaries, {len(decisions)} decisions",
                                     "metadata": {
                                         "trigger": trigger,
                                         "collection": COLLECTION_DISCUSSIONS,
-                                        "memory_type": "session",
                                         "method": "get_recent",
+                                        "agent_id": _compact_agent_id,
+                                        "compact_count": _compact_state.compact_count,
+                                        "summary_limit": _summary_limit,
                                         "result_count": len(session_summaries),
+                                        "decisions_count": len(decisions),
                                         "retrieval_ms": round(_retrieval_ms, 2),
                                         "parzival_enabled": False,
-                                        "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                        "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
                                     },
                                 },
                                 session_id=session_id,
@@ -1047,16 +986,21 @@ def main():
                             pass
                 except Exception as e:
                     logger.warning(
-                        "non_parzival_session_summaries_retrieval_failed",
+                        "compact_session_summaries_retrieval_failed",
                         extra={"session_id": session_id, "error": str(e)},
                     )
                     session_summaries = []
+                    decisions = []
                 finally:
                     searcher.close()
 
-                other_memories = []
+                # Update compact state — increment compact_count, clear injected IDs
+                _compact_state.reset_after_compact()
+                _compact_state.save()
+
+                other_memories = decisions
                 memories_per_collection = {
-                    COLLECTION_DISCUSSIONS: 0,
+                    COLLECTION_DISCUSSIONS: len(decisions),
                     COLLECTION_CODE_PATTERNS: 0,
                     COLLECTION_CONVENTIONS: 0,
                 }
@@ -1220,29 +1164,49 @@ def main():
                                 "metadata": {
                                     "trigger": trigger,
                                     "collections_searched": collections_searched,
-                                    "results_considered": len(session_summaries) + sum(memories_per_collection.values()),
+                                    "results_considered": len(session_summaries)
+                                    + sum(memories_per_collection.values()),
                                     "results_selected": total_count,
                                     "summary_count": summary_count,
-                                    "memory_counts": {k: v for k, v in memories_per_collection.items() if v > 0},
+                                    "memory_counts": {
+                                        k: v
+                                        for k, v in memories_per_collection.items()
+                                        if v > 0
+                                    },
                                     "tokens_used": token_count,
                                     "budget": config.token_budget,
                                     "results_detail": [
                                         {
                                             "type": s.get("type", "session_summary"),
-                                            "tokens": count_tokens(s.get("content", "")) if s.get("content") else 0,
+                                            "tokens": (
+                                                count_tokens(s.get("content", ""))
+                                                if s.get("content")
+                                                else 0
+                                            ),
                                         }
                                         for s in session_summaries[:10]
-                                    ] + [
+                                    ]
+                                    + [
                                         {
                                             "type": m.get("type", "unknown"),
-                                            "collection": m.get("collection", "unknown"),
+                                            "collection": m.get(
+                                                "collection", "unknown"
+                                            ),
                                             "score": round(m.get("score", 0), 4),
-                                            "tokens": count_tokens(m.get("content", "")) if m.get("content") else 0,
+                                            "tokens": (
+                                                count_tokens(m.get("content", ""))
+                                                if m.get("content")
+                                                else 0
+                                            ),
                                         }
                                         for m in other_memories[:10]
                                     ],
-                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                    "agent_name": os.environ.get(
+                                        "CLAUDE_AGENT_NAME", "main"
+                                    ),
+                                    "agent_role": os.environ.get(
+                                        "CLAUDE_AGENT_ROLE", "user"
+                                    ),
                                 },
                             },
                             session_id=session_id,
@@ -1266,10 +1230,27 @@ def main():
                                     "tokens_injected": token_count,
                                     "budget": config.token_budget,
                                     "summary": f"Injected {token_count} tokens from {total_count} results",
-                                    "result_types": [s.get("type", "session_summary") for s in session_summaries[:10]] + [m.get("type", "unknown") for m in other_memories[:10]],
-                                    "result_scores": [0.0 for _ in session_summaries[:10]] + [round(m.get("score", 0), 4) for m in other_memories[:10]],
-                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                    "result_types": [
+                                        s.get("type", "session_summary")
+                                        for s in session_summaries[:10]
+                                    ]
+                                    + [
+                                        m.get("type", "unknown")
+                                        for m in other_memories[:10]
+                                    ],
+                                    "result_scores": [
+                                        0.0 for _ in session_summaries[:10]
+                                    ]
+                                    + [
+                                        round(m.get("score", 0), 4)
+                                        for m in other_memories[:10]
+                                    ],
+                                    "agent_name": os.environ.get(
+                                        "CLAUDE_AGENT_NAME", "main"
+                                    ),
+                                    "agent_role": os.environ.get(
+                                        "CLAUDE_AGENT_ROLE", "user"
+                                    ),
                                 },
                             },
                             span_id=_compact_root_span_id,
@@ -1328,8 +1309,12 @@ def main():
                                     "trigger": trigger,
                                     "results_considered": 0,
                                     "results_selected": 0,
-                                    "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                    "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                    "agent_name": os.environ.get(
+                                        "CLAUDE_AGENT_NAME", "main"
+                                    ),
+                                    "agent_role": os.environ.get(
+                                        "CLAUDE_AGENT_ROLE", "user"
+                                    ),
                                 },
                             },
                             session_id=session_id,
@@ -1380,8 +1365,12 @@ def main():
                                 "error": type(e).__name__,
                                 "results_considered": 0,
                                 "results_selected": 0,
-                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                "agent_name": os.environ.get(
+                                    "CLAUDE_AGENT_NAME", "main"
+                                ),
+                                "agent_role": os.environ.get(
+                                    "CLAUDE_AGENT_ROLE", "user"
+                                ),
                             },
                         },
                         session_id=_session,

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """PreToolUse Hook - Retrieve relevant best practices (ON-DEMAND ONLY).
 
-IMPORTANT: As of TECH-DEBT-012, this hook is NOT auto-triggered on Edit/Write.
-It is only invoked:
+IMPORTANT: As of TECH-DEBT-012, this hook is NOT auto-triggered on Edit/Write
+EXCEPT via auto-activation (§4.3 R-BP, §6.2 Rule 1):
 1. By review agents (code-review, adversarial-review, security-auditor)
 2. Manually via /best-practices skill (future)
-3. When BMAD_BEST_PRACTICES_EXPLICIT=true environment variable is set
+3. When AI_MEMORY_BEST_PRACTICES_EXPLICIT=true environment variable is set
+4. Auto: Error detection fired on same file in current session (confidence-gated >0.6)
+5. Auto: 3+ edits to same file in session — struggling pattern (confidence-gated >0.6)
 
-This reduces noise from constant best practice injection during regular coding.
+Auto-activation triggers reduce noise via confidence gating (best_score > 0.6).
 
 Shows Claude relevant coding standards, patterns, and practices to maintain
 consistency and quality across the codebase.
@@ -37,6 +39,7 @@ Performance:
 Exit Codes:
     - 0: Success (or graceful degradation on error)
 """
+
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4, §7.7
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
@@ -89,6 +92,140 @@ except ImportError:
     emit_trace_event = None
 
 TRACE_CONTENT_MAX = 10000  # Max chars for Langfuse input/output fields
+
+# §4.3 R-BP: Auto-activation confidence threshold
+AUTO_ACTIVATION_CONFIDENCE_THRESHOLD = 0.6
+
+# §4.3 R-BP: Struggling pattern edit count threshold
+STRUGGLING_EDIT_THRESHOLD = 3
+
+
+def _get_edit_counts_path(session_id: str) -> Path:
+    """Get path to per-session edit count tracker file."""
+    safe_id = "".join(c for c in session_id if c.isalnum() or c in "-_")[:64]
+    if not safe_id:
+        safe_id = "unknown"
+    return Path(f"/tmp/ai-memory-{safe_id}-edit-counts.json")
+
+
+def _increment_edit_count(file_path: str, session_id: str) -> int:
+    """Increment and return the edit count for a file in this session.
+
+    Tracks how many PreToolUse(Edit/Write) calls target each file,
+    enabling the struggling pattern detection (3+ edits → auto-activate).
+
+    Args:
+        file_path: File being edited/written
+        session_id: Current session identifier
+
+    Returns:
+        Current edit count for this file (after increment)
+    """
+    if not session_id or session_id == "unknown":
+        return 1
+
+    counts_path = _get_edit_counts_path(session_id)
+    counts: dict = {}
+    try:
+        if counts_path.exists():
+            counts = json.loads(counts_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        counts = {}
+
+    counts[file_path] = counts.get(file_path, 0) + 1
+    current = counts[file_path]
+
+    try:
+        counts_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = counts_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(counts))
+        os.replace(str(tmp), str(counts_path))
+    except OSError:
+        pass  # Best-effort persistence
+
+    return current
+
+
+def _check_auto_activation(
+    file_path: str, session_id: str, edit_count: int
+) -> str | None:
+    """Check auto-activation triggers per Behavior Spec §4.3 R-BP, §6.2 Rule 1.
+
+    Two triggers (both confidence-gated downstream):
+    1. ERROR-TRIGGERED: error_detection fired on same file in current session
+    2. STRUGGLING PATTERN: 3+ edits to same file in session
+
+    Args:
+        file_path: File being edited/written
+        session_id: Current session identifier
+        edit_count: Current edit count for this file
+
+    Returns:
+        Trigger reason string if activated, None otherwise
+    """
+    # Trigger 1: Error-triggered — error_detection flagged same file
+    # C-1 FIX: error_state uses WP-6 nested format keyed by error_group_id:
+    # {egid: {"error_group_id": egid, "file_path": path, ...}, ...}
+    if session_id and session_id != "unknown":
+        try:
+            from memory.injection import InjectionSessionState
+
+            state = InjectionSessionState.load(session_id)
+            if state.error_state and isinstance(state.error_state, dict):
+                for _egid, entry in state.error_state.items():
+                    # Skip internal tracking keys (e.g. _last_fix_injected)
+                    if _egid.startswith("_"):
+                        continue
+                    if isinstance(entry, dict):
+                        error_file = entry.get("file_path", "")
+                        if error_file and _file_paths_match(file_path, error_file):
+                            return "error_triggered"
+        except Exception:
+            pass  # Graceful degradation
+
+    # Trigger 2: Struggling pattern — 3+ edits to same file
+    if edit_count >= STRUGGLING_EDIT_THRESHOLD:
+        return "struggling_pattern"
+
+    return None
+
+
+def _file_paths_match(path_a: str, path_b: str) -> bool:
+    """Check if two file paths refer to the same file.
+
+    Handles exact match, trailing path segment match, and basename match
+    for robustness across absolute/relative path representations.
+
+    L-3 FIX: Full path suffix comparison before basename fallback to avoid
+    basename collisions (e.g. two different files named "utils.py").
+
+    Args:
+        path_a: First file path
+        path_b: Second file path
+
+    Returns:
+        True if paths likely refer to the same file
+    """
+    if not path_a or not path_b:
+        return False
+    if path_a == path_b:
+        return True
+
+    # L-3: Full path suffix comparison — check if shorter path is a
+    # trailing segment of the longer path (e.g. "src/foo.py" matches
+    # "/project/src/foo.py") using segment-aware comparison
+    parts_a = Path(path_a).parts
+    parts_b = Path(path_b).parts
+    shorter, longer = (parts_a, parts_b) if len(parts_a) <= len(parts_b) else (parts_b, parts_a)
+    if len(shorter) > 0 and longer[-len(shorter):] == shorter:
+        return True
+
+    # Basename fallback — only if basenames match (segment-aware)
+    basename_a = os.path.basename(path_a)
+    basename_b = os.path.basename(path_b)
+    if basename_a == basename_b and basename_a:
+        return True
+    return False
 
 
 def detect_component_from_path(file_path: str) -> tuple[str, str]:
@@ -271,18 +408,42 @@ def main() -> int:
         Exit code: Always 0 (graceful degradation)
     """
     start_time = time.perf_counter()
+    project_name = "unknown"
 
     try:
-        # Check if explicitly invoked (not auto-triggered)
-        # When auto-trigger is removed from settings.json, this script
-        # will only be called by review agents or manual skills
+        # Parse hook input from stdin FIRST (needed for auto-activation checks)
+        try:
+            hook_input = json.load(sys.stdin)
+        except json.JSONDecodeError:
+            logger.warning("malformed_hook_input")
+            return 0
+
+        # Extract context
+        tool_name = hook_input.get("tool_name", "")
+        tool_input = hook_input.get("tool_input") or {}
+        cwd = hook_input.get("cwd", os.getcwd())
+
+        # Extract file path from tool_input
+        file_path = tool_input.get("file_path", "")
+
+        if not file_path:
+            logger.debug("no_file_path", extra={"tool_name": tool_name})
+            return 0
+
+        # Extract session_id for auto-activation state tracking
+        session_id = hook_input.get("session_id", "unknown")
+
+        # Always track edit counts (needed for struggling pattern detection)
+        edit_count = _increment_edit_count(file_path, session_id)
+
+        # Check activation triggers (§4.3 R-BP, §6.2 Rule 1)
         explicit_mode = (
             os.environ.get("AI_MEMORY_BEST_PRACTICES_EXPLICIT", "false").lower()
             == "true"
         )
 
-        # If called without explicit flag and not by a review agent, exit silently
-        # This is a safety check in case the hook is re-enabled accidentally
+        auto_trigger_reason = None
+
         if not explicit_mode:
             # Check for review agent context
             agent_type = os.environ.get("AI_MEMORY_AGENT_TYPE", "").lower()
@@ -295,32 +456,16 @@ def main() -> int:
                 "code-reviewer",
             ]
             if agent_type not in review_agents:
-                logger.debug(
-                    "conventions_skipped_no_trigger", extra={"agent_type": agent_type}
+                # §4.3 R-BP: Check auto-activation triggers before silent exit
+                auto_trigger_reason = _check_auto_activation(
+                    file_path, session_id, edit_count
                 )
-                return 0  # Silent exit - no injection
-
-        # Parse hook input from stdin
-        try:
-            hook_input = json.load(sys.stdin)
-        except json.JSONDecodeError:
-            # Malformed JSON - graceful degradation
-            logger.warning("malformed_hook_input")
-            return 0
-
-        # Extract context
-        tool_name = hook_input.get("tool_name", "")
-        tool_input = hook_input.get("tool_input", {})
-        cwd = hook_input.get("cwd", os.getcwd())
-
-        # Extract file path from tool_input
-        # Edit has "file_path", Write has "file_path"
-        file_path = tool_input.get("file_path", "")
-
-        if not file_path:
-            # No file path - nothing to do
-            logger.debug("no_file_path", extra={"tool_name": tool_name})
-            return 0
+                if not auto_trigger_reason:
+                    logger.debug(
+                        "conventions_skipped_no_trigger",
+                        extra={"agent_type": agent_type},
+                    )
+                    return 0  # Silent exit - no injection
 
         # Detect component and domain from path
         component, domain = detect_component_from_path(file_path)
@@ -349,7 +494,7 @@ def main() -> int:
         _bp_root_span_id = _uuid4().hex
         os.environ["LANGFUSE_TRACE_ID"] = _uuid4().hex
         os.environ["LANGFUSE_ROOT_SPAN_ID"] = _bp_root_span_id
-        bp_session_id = hook_input.get("session_id", "unknown")
+        bp_session_id = session_id
         if bp_session_id and bp_session_id != "unknown":
             os.environ["CLAUDE_SESSION_ID"] = bp_session_id
 
@@ -403,6 +548,25 @@ def main() -> int:
                     ).inc()
                 return 0
 
+            # §4.3 R-BP: Confidence gate for auto-activated triggers
+            # Only fire auto-activation if best_score > 0.6 to avoid noise
+            if auto_trigger_reason:
+                best_score = results[0].get("score", 0)
+                # strict: score of exactly 0.6 is rejected (exclusive threshold)
+                if best_score <= AUTO_ACTIVATION_CONFIDENCE_THRESHOLD:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    logger.debug(
+                        "auto_activation_below_confidence",
+                        extra={
+                            "trigger": auto_trigger_reason,
+                            "best_score": best_score,
+                            "threshold": AUTO_ACTIVATION_CONFIDENCE_THRESHOLD,
+                            "file_path": file_path,
+                            "duration_ms": round(duration_ms, 2),
+                        },
+                    )
+                    return 0
+
             # Format for stdout display
             # This output will be shown to Claude BEFORE the tool executes
             output_parts = []
@@ -411,6 +575,13 @@ def main() -> int:
             output_parts.append("=" * 70)
             output_parts.append(f"File: {file_path}")
             output_parts.append(f"Component: {component} | Domain: {domain}")
+            if auto_trigger_reason:
+                trigger_display = (
+                    "Error detected on this file"
+                    if auto_trigger_reason == "error_triggered"
+                    else f"Multiple edits detected ({edit_count}x)"
+                )
+                output_parts.append(f"Trigger: {trigger_display}")
             output_parts.append("")
 
             for i, practice in enumerate(results, 1):
@@ -423,8 +594,11 @@ def main() -> int:
 
             # Log success with user visibility
             duration_ms = (time.perf_counter() - start_time) * 1000
+            trigger_label = (
+                f"auto:{auto_trigger_reason}" if auto_trigger_reason else "explicit"
+            )
             log_to_activity(
-                f"🎯 Best practices retrieved (explicit) for {file_path} [{duration_ms:.0f}ms]"
+                f"🎯 Best practices retrieved ({trigger_label}) for {file_path} [{duration_ms:.0f}ms]"
             )
             logger.info(
                 "conventions_retrieved",
@@ -435,6 +609,8 @@ def main() -> int:
                     "results_count": len(results),
                     "duration_ms": round(duration_ms, 2),
                     "project": project_name,
+                    "trigger": trigger_label,
+                    "auto_trigger_reason": auto_trigger_reason,
                 },
             )
 
@@ -466,8 +642,15 @@ def main() -> int:
                                 "collection": COLLECTION_CONVENTIONS,
                                 "result_count": len(results),
                                 "best_score": best_score,
-                                "agent_name": os.environ.get("CLAUDE_AGENT_NAME", "main"),
-                                "agent_role": os.environ.get("CLAUDE_AGENT_ROLE", "user"),
+                                "trigger": trigger_label,
+                                "auto_trigger_reason": auto_trigger_reason,
+                                "edit_count": edit_count,
+                                "agent_name": os.environ.get(
+                                    "CLAUDE_AGENT_NAME", "main"
+                                ),
+                                "agent_role": os.environ.get(
+                                    "CLAUDE_AGENT_ROLE", "user"
+                                ),
                             },
                         },
                         span_id=_bp_root_span_id,
@@ -482,7 +665,7 @@ def main() -> int:
             # TECH-DEBT-075: Push retrieval metrics to Pushgateway
             if push_retrieval_metrics_async:
                 push_retrieval_metrics_async(
-                    collection="code-patterns",
+                    collection=COLLECTION_CONVENTIONS,
                     status="success" if results else "empty",
                     duration_seconds=duration_ms / 1000.0,
                     project=project_name,
@@ -509,7 +692,7 @@ def main() -> int:
         )
 
         # Metrics
-        proj = project_name if "project_name" in dir() else "unknown"
+        proj = project_name
         if memory_retrievals_total:
             memory_retrievals_total.labels(
                 collection=COLLECTION_CONVENTIONS,

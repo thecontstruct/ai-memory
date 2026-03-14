@@ -123,6 +123,13 @@ class InjectionSessionState:
     topic_drift: float = 0.5
     turn_count: int = 0
     total_tokens_injected: int = 0
+    error_state: dict | None = field(default=None)
+    compact_count: int = 0
+    # H-3: Cross-turn access_count dedup — tracks which point IDs had access_count
+    # incremented this turn. Cleared when turn_count advances. Prevents double-counting
+    # when multiple search() calls in the same turn return overlapping results.
+    access_count_incremented_this_turn: list[str] = field(default_factory=list)
+    _last_turn_count: int = 0  # Internal: tracks turn_count for dedup set clearing
 
     @classmethod
     def load(cls, session_id: str) -> "InjectionSessionState":
@@ -160,10 +167,13 @@ class InjectionSessionState:
         """Reset injected IDs after compaction (context window cleared).
 
         Called when SessionStart fires with trigger=compact.
-        Previous injections are no longer in Claude's context window.
-        Keep last_query_embedding and topic_drift (conversation continues).
+        - CLEARS: injected_point_ids (context window is gone)
+        - PRESERVES: last_query_embedding, topic_drift, error_state (conversation continues)
+        - INCREMENTS: compact_count (tracks which compact in this session)
+        - UNCHANGED: turn_count, total_tokens_injected (accumulate across compacts per spec)
         """
         self.injected_point_ids = []
+        self.compact_count += 1
 
     @staticmethod
     def _state_path(session_id: str) -> Path:
@@ -614,6 +624,13 @@ def select_results_greedy(
         seen_hashes.add(content_hash)
 
         # BUG-173: Skip results with score gap from best exceeding threshold
+        # NOTE (PLAN-015 WP-2 / Spec §4.2.5 step 3): Freshness-blocked results (score=0.0)
+        # do NOT need an explicit skip here. Defense-in-depth coverage:
+        #   1. Gating (best_score<0.45 → hard_skip) prevents reaching this when ALL results are 0.0.
+        #   2. The `best_score > 0` guard below ensures 0.0-scored items are caught by gap filter
+        #      when any positive-scored result exists (0.0 < positive_score x threshold -> skip).
+        # The caller (context_injection_tier2.py) applies freshness penalty upstream so that
+        # post-penalty scores drive both gating and this selection. Do NOT add penalty logic here.
         result_score = result.get("score", 0)
         if best_score > 0 and result_score < best_score * score_gap_threshold:
             _score_gap_skipped += 1

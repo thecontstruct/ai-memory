@@ -89,6 +89,29 @@ failure_events_total = Counter(
 )
 
 # ==============================================================================
+# ERROR-FIX LINKAGE (V2.2.2 - WP-6, Behavior Spec §8.3)
+# ==============================================================================
+
+error_fix_captures_total = Counter(
+    "aimemory_error_fix_captures_total",
+    "Total error-fix pairs captured",
+    ["project"],
+)
+
+error_fix_injections_total = Counter(
+    "aimemory_error_fix_injections_total",
+    "Total error-fix pairs injected to agents",
+    ["project"],
+)
+
+error_fix_effectiveness_total = Counter(
+    "aimemory_error_fix_effectiveness_total",
+    "Error fix effectiveness tracking",
+    ["outcome", "project"],
+    # outcome: resolved, unresolved
+)
+
+# ==============================================================================
 # TOKEN TRACKING (V2.0 - TECH-DEBT-067)
 # ==============================================================================
 
@@ -120,6 +143,37 @@ trigger_results_returned = Histogram(
     "Number of results returned per trigger",
     ["trigger_type", "project"],
     buckets=[0, 1, 2, 3, 5, 10, 20],
+)
+
+# ==============================================================================
+# FRESHNESS (V2.2.2 - WP-2, Behavior Spec §8.4)
+# ==============================================================================
+
+freshness_status = Gauge(
+    "ai_memory_freshness_status",
+    "Current count of memories by freshness tier",
+    ["status", "project"],
+    # status: fresh, aging, stale, expired, unknown
+)
+
+freshness_total = Counter(
+    "ai_memory_freshness_total",
+    "Cumulative freshness scan results for trend analysis",
+    ["status", "project"],
+    # status: fresh, aging, stale, expired, unknown
+)
+
+freshness_blocked_injections_total = Counter(
+    "ai_memory_freshness_blocked_injections_total",
+    "Total injections blocked by freshness gating",
+    ["project"],
+)
+
+freshness_scan_duration_seconds = Histogram(
+    "ai_memory_freshness_scan_duration_seconds",
+    "Freshness scan duration in seconds",
+    ["project"],
+    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0],
 )
 
 # ==============================================================================
@@ -238,7 +292,7 @@ system_info.info(
         "version": _VERSION,
         "embedding_model": "jina-embeddings-v2-base-en",
         "vector_dimensions": "768",
-        "collections": "code-patterns,conventions,discussions,jira-data",
+        "collections": "code-patterns,conventions,discussions,github,jira-data",
     }
 )
 

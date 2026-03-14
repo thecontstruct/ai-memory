@@ -501,7 +501,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
 
         # TECH-DEBT-051: Use IntelligentChunker for content chunking
         # MVP returns whole content as single chunk; TECH-DEBT-052 adds Tree-sitter AST chunking
-        chunker = IntelligentChunker(max_chunk_tokens=512, overlap_pct=0.15)
+        chunker = IntelligentChunker(max_chunk_tokens=1024, overlap_pct=0.20)
         chunks = chunker.chunk(patterns["content"], file_path)
 
         if not chunks:
