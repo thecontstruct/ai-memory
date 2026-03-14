@@ -54,8 +54,6 @@ dependencies = [
     "tiktoken>=0.5.0,<1.0.0",
     # Numpy for vector operations (topic drift computation)
     "numpy>=1.26.0,<3.0.0",
-    # Security scanning - Layer 2 secret detection (SPEC-009)
-    "detect-secrets>=1.4.0",
     # Security scanning - Layer 3 NER-based PII detection (SPEC-009)
     "spacy>=3.8.0,<4.0.0",
     # LLM Observability — Langfuse tracing (SPEC-020, PLAN-008)
@@ -87,6 +85,7 @@ dev = [
     "mypy>=1.19.0,<2.0.0",
     # Security Scanning
     "bandit[toml]>=1.7.0,<2.0.0",
+    "detect-secrets>=1.4.0",
     # Structured logging
     "python-json-logger>=4.0.0,<5.0.0",
     # YAML processing with format preservation
@@ -114,7 +113,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --strict-markers"
+addopts = "-v --tb=short --strict-markers -m 'not regression'"
 norecursedirs = ["archived", ".git", "__pycache__", ".pytest_cache"]
 markers = [
     "integration: integration tests requiring Docker stack",
@@ -126,6 +125,7 @@ markers = [
     "requires_api: Tests requiring Monitoring API service on port 28000",
     "requires_streamlit: Tests requiring Streamlit dashboard on port 28501",
     "quarantine: Quarantined flaky tests excluded from default CI runs",
+    "regression: Regression tests requiring live Langfuse + Qdrant (excluded from default pytest run)",
 ]
 
 # Coverage configuration

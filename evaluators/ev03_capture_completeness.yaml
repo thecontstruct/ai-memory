@@ -1,0 +1,19 @@
+# Evaluator: EV-03 Capture Completeness
+# Scores whether hook capture events collected all expected fields.
+# High-volume path — 5% sampling to stay within judge budget.
+
+id: EV-03
+name: capture_completeness
+score_type: BOOLEAN
+target: observation
+sampling_rate: 0.05
+
+filter:
+  tags: [capture, user_prompt, agent_response, session_summary, store]
+
+prompt_file: ev03_capture_completeness_prompt.md
+
+description: >
+  Determines whether a hook capture event collected all expected fields
+  for its event type (true = complete, false = fields missing or truncated).
+  Score is BOOLEAN.

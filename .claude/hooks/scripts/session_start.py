@@ -484,7 +484,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
-                                    tags=["retrieval"],
+                                    tags=["injection", "tier1", "bootstrap"],
                                 )
                             except Exception:
                                 pass
@@ -577,7 +577,7 @@ def main():
                             parent_span_id=None,
                             session_id=session_id,
                             project_id=project_name,
-                            tags=["retrieval"],
+                            tags=["injection", "resume"],
                         )
                     except Exception:
                         pass
@@ -628,7 +628,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
-                            tags=["retrieval"],
+                            tags=["injection", "tier1", "bootstrap"],
                         )
                     except Exception:
                         pass
@@ -781,7 +781,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
-                                    tags=["retrieval", "injection"],
+                                    tags=["injection", "tier1", "bootstrap"],
                                 )
                             except Exception:
                                 pass
@@ -839,7 +839,7 @@ def main():
                                     },
                                     session_id=session_id,
                                     project_id=project_name,
-                                    tags=["retrieval", "injection"],
+                                    tags=["injection", "tier1", "bootstrap"],
                                 )
                             except Exception:
                                 pass
@@ -924,6 +924,38 @@ def main():
                             }
                         )
 
+                    # TD-228: Per-search trace for session summaries (compact path)
+                    if emit_trace_event:
+                        try:
+                            emit_trace_event(
+                                event_type="memory_retrieval_sessions",
+                                data={
+                                    "input": f"get_recent(discussions, type=session, agent_id={_compact_agent_id!r}, limit={_summary_limit}) for {project_name}",
+                                    "output": f"Retrieved {len(session_summaries)} session summaries",
+                                    "metadata": {
+                                        "trigger": trigger,
+                                        "collection": COLLECTION_DISCUSSIONS,
+                                        "query_type": "session",
+                                        "method": "get_recent",
+                                        "agent_id": _compact_agent_id,
+                                        "limit": _summary_limit,
+                                        "result_count": len(session_summaries),
+                                        "top_results": [
+                                            {
+                                                "type": s.get("type", "session"),
+                                                "content_preview": s.get("content", "")[:200],
+                                            }
+                                            for s in session_summaries[:5]
+                                        ],
+                                    },
+                                },
+                                session_id=session_id,
+                                project_id=project_name,
+                                tags=["injection", "compact"],
+                            )
+                        except Exception:
+                            pass
+
                     # Retrieve decisions (PLAN-015 §4.1 — non-Parzival gets max 3)
                     _decision_kwargs: dict = {
                         "collection": COLLECTION_DISCUSSIONS,
@@ -955,6 +987,39 @@ def main():
                         )
                         decisions = []
 
+                    # TD-228: Per-search trace for decisions (compact path)
+                    if emit_trace_event:
+                        try:
+                            emit_trace_event(
+                                event_type="memory_retrieval_decisions",
+                                data={
+                                    "input": f"get_recent(discussions, type=decision, agent_id={_compact_agent_id!r}, limit=3) for {project_name}",
+                                    "output": f"Retrieved {len(decisions)} decisions",
+                                    "metadata": {
+                                        "trigger": trigger,
+                                        "collection": COLLECTION_DISCUSSIONS,
+                                        "query_type": "decision",
+                                        "method": "get_recent",
+                                        "agent_id": _compact_agent_id,
+                                        "limit": 3,
+                                        "result_count": len(decisions),
+                                        "top_results": [
+                                            {
+                                                "type": d.get("type", "decision"),
+                                                "score": round(d.get("score", 0.0), 4),
+                                                "content_preview": d.get("content", "")[:200],
+                                            }
+                                            for d in decisions[:5]
+                                        ],
+                                    },
+                                },
+                                session_id=session_id,
+                                project_id=project_name,
+                                tags=["injection", "compact"],
+                            )
+                        except Exception:
+                            pass
+
                     _retrieval_ms = (time.perf_counter() - _retrieval_start) * 1000
 
                     # TD-228 compatible trace event
@@ -980,7 +1045,7 @@ def main():
                                 },
                                 session_id=session_id,
                                 project_id=project_name,
-                                tags=["retrieval", "injection"],
+                                tags=["injection", "tier1", "bootstrap"],
                             )
                         except Exception:
                             pass
@@ -1049,6 +1114,41 @@ def main():
                 ) + conversation_context.count("**Agent")
                 summary_count = conversation_context.count("**Summary")
                 total_count = message_count + summary_count
+
+                # TD-228: Greedy-fill trace event for compact injection
+                if emit_trace_event:
+                    try:
+                        _gf_input_count = len(session_summaries) + len(other_memories)
+                        _gf_tokens_est = (len(conversation_context) + 2) // 3
+                        _gf_dropped = max(0, _gf_input_count - total_count)
+                        emit_trace_event(
+                            event_type="greedy_fill",
+                            data={
+                                "input": f"inject_with_priority: {_gf_input_count} candidates, budget={config.token_budget} tokens",
+                                "output": f"Selected {total_count} items ({summary_count} summaries, {message_count} messages), dropped {_gf_dropped}",
+                                "metadata": {
+                                    "trigger": trigger,
+                                    "input_count": _gf_input_count,
+                                    "selected_count": total_count,
+                                    "dropped_count": _gf_dropped,
+                                    "summary_count": summary_count,
+                                    "message_count": message_count,
+                                    "tokens_used_est": _gf_tokens_est,
+                                    "budget": config.token_budget,
+                                    "budget_used_pct": (
+                                        round(_gf_tokens_est / config.token_budget * 100, 1)
+                                        if config.token_budget > 0
+                                        else 0
+                                    ),
+                                },
+                            },
+                            session_id=session_id,
+                            project_id=project_name,
+                            tags=["injection", "compact"],
+                        )
+                    except Exception:
+                        pass
+
                 logger.info(
                     "conversation_context_injected",
                     extra={
@@ -1211,7 +1311,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
-                            tags=["retrieval", "injection"],
+                            tags=["injection", "tier1", "bootstrap"],
                         )
                     except Exception:
                         pass
@@ -1257,7 +1357,7 @@ def main():
                             parent_span_id=None,
                             session_id=session_id,
                             project_id=project_name,
-                            tags=["retrieval", "injection"],
+                            tags=["injection", "tier1", "bootstrap"],
                         )
                     except Exception:
                         logger.debug("trace_event_failed_session_restore")
@@ -1319,7 +1419,7 @@ def main():
                             },
                             session_id=session_id,
                             project_id=project_name,
-                            tags=["retrieval"],
+                            tags=["injection", "tier1", "bootstrap"],
                         )
                     except Exception:
                         pass
@@ -1375,7 +1475,7 @@ def main():
                         },
                         session_id=_session,
                         project_id=_project,
-                        tags=["retrieval"],
+                        tags=["injection", "tier1", "bootstrap"],
                     )
                 except Exception:
                     pass
