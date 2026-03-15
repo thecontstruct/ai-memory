@@ -2,6 +2,7 @@
 
 **Purpose**: Track all research needed for BMAD Multi-Agent Architecture implementation
 **Created**: 2026-01-21
+**Last Reviewed**: 2026-03-15
 **Status**: Research Phase (gather all findings before implementation decisions)
 
 ---
@@ -22,7 +23,7 @@
 | BP-009 | PostgreSQL Agent Schema | ✅ COMPLETE | Informed | Critical |
 | BP-010 | FastAPI WebSocket Patterns | ✅ COMPLETE | Verified | Critical |
 | BP-011 | Human-in-the-Loop Approvals | ✅ COMPLETE | Verified | High |
-| BP-012 | Claude SDK Subagent Lifecycle | ✅ COMPLETE | Verified | Critical |
+| BP-012 | Claude SDK Agent Lifecycle | ✅ COMPLETE | Verified | Critical |
 | BP-013 | LLM Cost Tracking | ✅ COMPLETE | Informed | High |
 | BP-014 | Intelligent Document Chunking | ✅ COMPLETE | Verified | Critical |
 | BP-015 | RAG Collection Management | ✅ COMPLETE | Informed | Critical |
@@ -73,11 +74,11 @@
 **Why**: EU AI Act Article 14 compliance, prevents irreversible errors, audit trail
 **Source**: [BP-011 Full Document](../../oversight/knowledge/best-practices/BP-011-human-in-loop-approval-workflows-2025.md)
 
-#### BP-012: Claude Agent SDK Subagent Lifecycle Management
-**Question**: How to manage subagent spawning and context isolation?
+#### BP-012: Claude Agent SDK Agent Lifecycle Management
+**Question**: How to manage agent spawning and context isolation?
 **Finding**: **Initializer + Orchestrator + Worker pattern** - Parzival orchestrates, workers execute in isolated contexts
-**Recommendation**: Define subagents in `.claude/agents/` with clear description fields for auto-delegation
-**Why**: Anthropic official pattern, prevents context pollution, enables parallelization
+**Recommendation**: Define agents in `_ai-memory/pov/agents/` with clear description fields. In Parzival 2.1, agents MUST be spawned as teammates (TeamCreate + Agent with team_name, per GC-19), never as standalone subagents. BMAD activation and instruction must be separate messages (GC-20).
+**Why**: Anthropic official pattern, prevents context pollution, enables parallelization. Teammate pattern ensures proper lifecycle management.
 **Source**: [BP-012 Full Document](../../oversight/knowledge/best-practices/BP-012-claude-agent-sdk-subagent-lifecycle-2025.md)
 
 #### BP-013: LLM Cost Tracking & Token Budgeting
@@ -177,90 +178,7 @@
 
 ## Memory Module Research (BP-014 through BP-021) - Detailed Research Topics
 
-### Critical Path (Blocks Implementation)
-
-#### BP-014: Intelligent Document Chunking (2025-2026)
-**Status**: 🔄 IN PROGRESS
-**Question**: How to chunk markdown and code files for optimal RAG retrieval?
-**Research Topics**:
-- Semantic chunking vs fixed-size (markdown-aware)
-- Token overlap strategies (prevent context loss at boundaries)
-- Metadata preservation (file path, section headers, code context)
-- Chunk size optimization for jina-embeddings-v2-base-en (768 dimensions)
-- Code vs prose chunking (AST-aware for code, paragraph-aware for docs)
-- Language-specific strategies (Python, TypeScript, Markdown)
-
-**Why Critical**: All file ingestion depends on chunking strategy. Poor chunking = poor retrieval accuracy.
-
-**Expected Deliverables**:
-- Recommended chunk size (tokens/characters)
-- Overlap strategy (fixed vs semantic)
-- Metadata schema for chunks
-- Code example: `IntelligentChunker` class
-
----
-
-#### BP-015: RAG Collection Management Patterns (2025-2026)
-**Status**: 🔄 IN PROGRESS
-**Question**: How to route content to correct collections and search across them?
-**Research Topics**:
-- Collection routing logic (content type → collection mapping)
-- Cross-collection search strategies (when to query multiple collections)
-- Collection lifecycle management (archive, merge, split)
-- Hybrid search patterns (vector + keyword combined)
-- Query routing (user intent → collection selection)
-
-**Why Critical**: Multi-collection architecture needs clear routing rules. Wrong collection = retrieval failure.
-
-**Expected Deliverables**:
-- Collection routing decision tree
-- Cross-collection search patterns
-- Collection health metrics
-- Code example: `CollectionRouter` class
-
----
-
-### High Priority (User Experience)
-
-#### BP-016: Codebase Auto-Indexing Strategies (2025-2026)
-**Status**: ⏳ NOT STARTED
-**Question**: How to automatically index BMAD project files into memory?
-**Research Topics**:
-- File watch patterns (inotify, watchdog, fswatch)
-- Incremental indexing (only changed files, not full re-index)
-- AST parsing for code structure (functions, classes, imports)
-- Documentation cross-referencing (README → code files)
-- Git-aware indexing (respect .gitignore, track file renames)
-- BMAD-specific patterns (_bmad-output/, oversight/, src/)
-
-**Why High Priority**: Manual upload is tedious. Auto-indexing critical for developer experience.
-
-**Expected Deliverables**:
-- Watch pattern configuration
-- Incremental indexing algorithm
-- BMAD project scanner script
-- Code example: `BMadProjectScanner` class
-
----
-
-#### BP-017: Vector Database Maintenance & Hygiene (2025-2026)
-**Status**: ⏳ NOT STARTED
-**Question**: How to prevent Qdrant degradation over time?
-**Research Topics**:
-- Deduplication strategies (beyond hash-based: semantic similarity)
-- Stale memory detection (last accessed, relevance decay)
-- Collection compaction and optimization (Qdrant-specific)
-- Embedding drift detection (when to re-embed old content)
-- Orphaned point cleanup (embeddings without source files)
-- Performance monitoring (query latency, storage growth)
-
-**Why High Priority**: Without maintenance, memory becomes polluted and slow.
-
-**Expected Deliverables**:
-- Maintenance schedule (daily, weekly, monthly tasks)
-- Deduplication threshold recommendations
-- Archival policy (when to delete vs archive)
-- Code example: `db_maintenance.py` script
+> **Note**: BP-014 through BP-017 research is complete. See the "Memory Module Research (BP-014 through BP-017)" section above for findings. The topics below (BP-018 through BP-021) remain open.
 
 ---
 
@@ -348,7 +266,7 @@
 
 ---
 
-#### BP-025: Agent Consensus Patterns (2025-2026)
+#### BP-031: Agent Consensus Patterns (2025-2026)
 **Status**: ⏳ NOT STARTED
 **Question**: How to handle disagreement between multiple agents?
 **Research Topics**:
@@ -366,23 +284,27 @@
 - Use case mapping
 - Code example: `ConsensusResolver` class
 
+> **Note**: Originally listed as BP-025, renumbered to avoid conflict with the completed BP-025 (GDPR Privacy Audit Trails).
+
 ---
 
 ## Additional Research Recommendations
 
 ### Recommended Additions
 
-1. **BP-026: Agent Observability & Debugging (2025-2026)**
+1. **BP-032: Agent Observability & Debugging (2025-2026)**
    - Distributed tracing (agent call chains)
    - Logging aggregation (ELK, Grafana Loki)
    - Performance profiling (agent execution time)
    - Debug replay (re-run agent with same inputs)
+   > Originally listed as BP-026, renumbered to avoid conflict with completed BP-026 (Hook Reliability Patterns).
 
-2. **BP-027: Agent Testing Strategies (2025-2026)**
+2. **BP-033: Agent Testing Strategies (2025-2026)**
    - Unit testing agents (mock LLM responses)
    - Integration testing (multi-agent workflows)
    - Regression testing (detect behavior changes)
    - Load testing (concurrent agent execution)
+   > Originally listed as BP-027, renumbered to avoid conflict with completed BP-027 (Multi-Agent State Persistence).
 
 3. **BP-028: Agent Configuration Management (2025-2026)**
    - Environment-based configs (dev, staging, prod)
@@ -435,7 +357,7 @@
 
 ### Cross-Cutting Analysis
 
-Once all BP-014 through BP-030 are researched:
+Once all BP-014 through BP-033 are researched:
 
 1. **Identify Conflicts**
    - Do any recommendations contradict each other?
@@ -460,7 +382,7 @@ Once all BP-014 through BP-030 are researched:
 ## Success Metrics
 
 **Research Phase Complete When**:
-- ✅ All BP-014 through BP-030 have status: COMPLETE
+- ✅ All BP-014 through BP-033 have status: COMPLETE
 - ✅ All findings documented in `oversight/knowledge/best-practices/`
 - ✅ All summaries stored in Qdrant `conventions` collection
 - ✅ This tracker updated with findings and recommendations
@@ -483,6 +405,6 @@ Once all BP-014 through BP-030 are researched:
 
 ---
 
-**Last Updated**: 2026-01-21
-**Next Review**: After BP-030 research complete
-**Total Research Topics**: 17 (BP-014 through BP-030)
+**Last Updated**: 2026-03-15
+**Next Review**: After BP-033 research complete
+**Total Research Topics**: 20 (BP-014 through BP-033, excluding renumbered gaps)
