@@ -60,11 +60,17 @@ def _fetch_existing_configs(langfuse) -> dict[str, list]:
 
 
 def _cleanup_duplicates(langfuse, existing: dict[str, list]) -> None:
-    """Delete duplicate score configs, keeping the oldest one (first created)."""
+    """Archive duplicate score configs, keeping the oldest one (first created).
+
+    Langfuse API does not support DELETE on score configs (405).
+    Uses update(isArchived=True) instead — archived configs are hidden in UI.
+    """
+    from langfuse.api.resources.score_configs.types import UpdateScoreConfigRequest
+
     for name, configs in existing.items():
         if len(configs) <= 1:
             continue
-        # Sort by created_at ascending, keep first, delete the rest
+        # Sort by created_at ascending, keep first, archive the rest
         try:
             sorted_configs = sorted(
                 configs, key=lambda c: getattr(c, "created_at", "9999-99-99")
@@ -72,17 +78,20 @@ def _cleanup_duplicates(langfuse, existing: dict[str, list]) -> None:
         except Exception:
             sorted_configs = configs
 
-        to_delete = sorted_configs[1:]
-        for cfg in to_delete:
+        to_archive = sorted_configs[1:]
+        for cfg in to_archive:
             cfg_id = getattr(cfg, "id", None)
             if not cfg_id:
                 continue
             try:
-                langfuse.api.score_configs.delete(cfg_id)
-                print(f"  [DEL] Removed duplicate config '{name}' id={cfg_id}")
+                langfuse.api.score_configs.update(
+                    cfg_id,
+                    request=UpdateScoreConfigRequest(isArchived=True),
+                )
+                print(f"  [ARCHIVED] Duplicate config '{name}' id={cfg_id}")
             except Exception as exc:
                 print(
-                    f"  [WARN] Could not delete duplicate '{name}' id={cfg_id}: {exc}"
+                    f"  [WARN] Could not archive duplicate '{name}' id={cfg_id}: {exc}"
                 )
 
 

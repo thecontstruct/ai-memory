@@ -71,6 +71,7 @@ def _build_langfuse_modules(mock_client):
 
     fake_sc_types = types.ModuleType("langfuse.api.resources.score_configs.types")
     fake_sc_types.CreateScoreConfigRequest = MagicMock(side_effect=lambda **kw: kw)
+    fake_sc_types.UpdateScoreConfigRequest = MagicMock(side_effect=lambda **kw: kw)
 
     modules = {
         "langfuse": fake_langfuse,
@@ -113,7 +114,7 @@ def _make_client_with_existing(existing_names: list[str], list_side_effect=None)
     else:
         client.api.score_configs.get.return_value = _make_list_response(configs)
     client.api.score_configs.create.return_value = MagicMock()
-    client.api.score_configs.delete.return_value = None
+    client.api.score_configs.update.return_value = None
     client.flush.return_value = None
     return client
 
@@ -169,7 +170,7 @@ class TestCleanupDuplicates:
                 "retrieval_relevance": [_make_config("retrieval_relevance", "id-1")]
             }
             mod._cleanup_duplicates(c, existing)
-        client.api.score_configs.delete.assert_not_called()
+        client.api.score_configs.update.assert_not_called()
 
     def test_deletes_extra_copies_keeps_oldest(self):
         client = MagicMock()
@@ -178,12 +179,13 @@ class TestCleanupDuplicates:
         with _patched_module(client) as (mod, c):
             existing = {"retrieval_relevance": [older, newer]}
             mod._cleanup_duplicates(c, existing)
-        # Newer (id-new) should be deleted; oldest (id-old) kept
-        client.api.score_configs.delete.assert_called_once_with("id-new")
+        # Newer (id-new) should be archived; oldest (id-old) kept
+        client.api.score_configs.update.assert_called_once()
+        assert client.api.score_configs.update.call_args[0][0] == "id-new"
 
     def test_handles_delete_error_gracefully(self):
         client = MagicMock()
-        client.api.score_configs.delete.side_effect = RuntimeError("delete failed")
+        client.api.score_configs.update.side_effect = RuntimeError("delete failed")
         older = _make_config("retrieval_relevance", "id-old", "2026-01-01T00:00:00Z")
         newer = _make_config("retrieval_relevance", "id-new", "2026-02-01T00:00:00Z")
         with _patched_module(client) as (mod, c):
@@ -194,7 +196,7 @@ class TestCleanupDuplicates:
     def test_missing_created_at_sorts_last_and_gets_deleted(self):
         """Config without created_at should sort last (treated as newest) and be deleted."""
         client = MagicMock()
-        client.api.score_configs.delete.return_value = None
+        client.api.score_configs.update.return_value = None
         # Config with a real date — should be kept as the "oldest"
         with_date = _make_config(
             "retrieval_relevance", "id-with-date", "2026-01-01T00:00:00Z"
@@ -207,8 +209,9 @@ class TestCleanupDuplicates:
         with _patched_module(client) as (mod, c):
             existing = {"retrieval_relevance": [with_date, no_date]}
             mod._cleanup_duplicates(c, existing)
-        # The one without created_at should be deleted; the dated one kept
-        c.api.score_configs.delete.assert_called_once_with("id-no-date")
+        # The one without created_at should be archived; the dated one kept
+        c.api.score_configs.update.assert_called_once()
+        assert c.api.score_configs.update.call_args[0][0] == "id-no-date"
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +280,7 @@ class TestMainIdempotency:
             _make_list_response(deduped),  # post-cleanup fetch
         ]
         client.api.score_configs.create.return_value = MagicMock()
-        client.api.score_configs.delete.return_value = None
+        client.api.score_configs.update.return_value = None
         client.flush.return_value = None
 
         rc, c = _run_main(
@@ -285,8 +288,9 @@ class TestMainIdempotency:
         )
 
         assert rc == 0
-        # Duplicate deleted
-        c.api.score_configs.delete.assert_called_once_with("id-new")
+        # Duplicate archived
+        c.api.score_configs.update.assert_called_once()
+        assert c.api.score_configs.update.call_args[0][0] == "id-new"
         # All 6 configs present after cleanup — nothing to create
         c.api.score_configs.create.assert_not_called()
         c.flush.assert_called_once()
