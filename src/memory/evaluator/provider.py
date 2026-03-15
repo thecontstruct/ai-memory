@@ -79,7 +79,7 @@ class EvaluatorConfig:
             if self.base_url:
                 base_url = self.base_url
             elif api_key:
-                base_url = "https://api.ollama.com/v1"
+                base_url = "https://ollama.com/v1"
             else:
                 base_url = "http://localhost:11434/v1"
 
