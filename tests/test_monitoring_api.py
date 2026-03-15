@@ -12,9 +12,7 @@ before importing main so these tests run in the project's normal venv.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
-
-import pytest
+from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------
@@ -71,14 +69,12 @@ if _monitoring_path not in sys.path:
     sys.path.insert(0, _monitoring_path)
 
 # Now import the function under test
-import importlib
-import types
-
 # Use importlib to import main with patched sys.modules already in place
 if "main" in sys.modules:
     del sys.modules["main"]
 
 import main as _monitoring_main  # noqa: E402  (monitoring/main.py)
+
 sanitize_log_input = _monitoring_main.sanitize_log_input
 
 
@@ -195,6 +191,7 @@ class TestCallSiteSanitization:
     def test_str_e_always_wrapped_in_sanitize(self):
         """Every str(e) used in a logger call must be wrapped with sanitize_log_input."""
         import re
+
         source = self._read_main_source()
 
         # More precise: look for "error": str(e) that is NOT inside sanitize_log_input(...)
@@ -202,21 +199,24 @@ class TestCallSiteSanitization:
         for match in re.finditer(r'"error":\s*(str\([^)]+\))', source):
             str_pos = match.start(1)
             sanitize_prefix = "sanitize_log_input("
-            prefix = source[max(0, str_pos - len(sanitize_prefix)):str_pos]
-            assert prefix.endswith(sanitize_prefix), (
-                f"Unsanitized str() found at log call site: {match.group(0)}"
-            )
+            prefix = source[max(0, str_pos - len(sanitize_prefix)) : str_pos]
+            assert prefix.endswith(
+                sanitize_prefix
+            ), f"Unsanitized str() found at log call site: {match.group(0)}"
 
     def test_collection_name_in_extra_always_sanitized(self):
         """Every collection_name used in logger extra dicts must be sanitized inline."""
         import re
+
         source = self._read_main_source()
 
         # Find bare "collection": collection_name (not wrapped in sanitize_log_input)
-        for match in re.finditer(r'"collection":\s*(collection_name|request\.collection)', source):
-            value = match.group(1)
+        for match in re.finditer(
+            r'"collection":\s*(collection_name|request\.collection)', source
+        ):
+            _value = match.group(1)
             context_start = max(0, match.start() - 60)
-            context = source[context_start:match.end()]
-            assert "sanitize_log_input" in context, (
-                f"Unsanitized collection_name found at log call site: ...{context}..."
-            )
+            context = source[context_start : match.end()]
+            assert (
+                "sanitize_log_input" in context
+            ), f"Unsanitized collection_name found at log call site: ...{context}..."

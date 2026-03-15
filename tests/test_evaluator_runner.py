@@ -6,7 +6,7 @@ mocked Langfuse client.
 
 Covers:
 - Trace-level evaluation path (EV-05, EV-06 style)
-- Observation-level evaluation path (EV-01–EV-04 style)
+- Observation-level evaluation path (EV-01-EV-04 style)
 - Cursor-based pagination for observations (BUG-217)
 - Page-based pagination for traces
 - CATEGORICAL score type (EV-04)
@@ -422,7 +422,9 @@ class TestRunnerRunTracePath:
             result = runner.run(since=since)
 
         assert result["evaluated"] == 0
-        assert result["sampled"] == 0  # R2-F7: sampled not incremented for no-output traces
+        assert (
+            result["sampled"] == 0
+        )  # R2-F7: sampled not incremented for no-output traces
         mock_evaluator_config.evaluate.assert_not_called()
 
     def test_run_uses_page_pagination_for_trace_path(self, runner, evaluator_yaml):
@@ -567,7 +569,10 @@ class TestRunnerRunObservationPath:
         )
 
         mock_evaluator_config = MagicMock()
-        mock_evaluator_config.evaluate.return_value = {"score": 0.85, "reasoning": "Good"}
+        mock_evaluator_config.evaluate.return_value = {
+            "score": 0.85,
+            "reasoning": "Good",
+        }
 
         since = datetime(2026, 3, 12, tzinfo=timezone.utc)
 
@@ -624,7 +629,9 @@ class TestRunnerRunObservationPath:
             result = runner.run(since=since)
 
         assert result["evaluated"] == 0
-        assert result["sampled"] == 0  # R2-F7: sampled not incremented for no-output obs
+        assert (
+            result["sampled"] == 0
+        )  # R2-F7: sampled not incremented for no-output obs
         mock_evaluator_config.evaluate.assert_not_called()
 
     def test_observation_path_dry_run_no_score(
@@ -713,7 +720,7 @@ class TestCursorPaginationObservations:
             patch("memory.evaluator.runner.get_client", return_value=mock_langfuse),
             patch.object(runner, "evaluator_config", mock_evaluator_config),
         ):
-            result = runner.run(since=since)
+            _result = runner.run(since=since)
 
         # Each event_type does 2 pages → 4 total calls for 2 event_types
         assert mock_langfuse.api.observations.get_many.call_count == 4
@@ -1196,7 +1203,9 @@ class TestCategoricalValidation:
         mock_langfuse.create_score.assert_not_called()
         mock_logger.warning.assert_called()
 
-    def test_valid_categorical_value_is_scored(self, runner, categorical_evaluator_yaml):
+    def test_valid_categorical_value_is_scored(
+        self, runner, categorical_evaluator_yaml
+    ):
         """Categorical score within categories list must be scored normally."""
         obs = make_mock_observation(obs_id="obs_goodcat", trace_id="trace_goodcat")
         mock_langfuse = MagicMock()

@@ -16,8 +16,6 @@ import types
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Path setup
 # ---------------------------------------------------------------------------
@@ -40,7 +38,9 @@ ALL_CONFIG_NAMES = [
 ]
 
 
-def _make_config(name: str, cfg_id: str = "abc123", created_at: str = "2026-01-01T00:00:00Z"):
+def _make_config(
+    name: str, cfg_id: str = "abc123", created_at: str = "2026-01-01T00:00:00Z"
+):
     cfg = MagicMock()
     cfg.name = name
     cfg.id = cfg_id
@@ -165,7 +165,9 @@ class TestCleanupDuplicates:
     def test_skips_non_duplicates(self):
         client = MagicMock()
         with _patched_module(client) as (mod, c):
-            existing = {"retrieval_relevance": [_make_config("retrieval_relevance", "id-1")]}
+            existing = {
+                "retrieval_relevance": [_make_config("retrieval_relevance", "id-1")]
+            }
             mod._cleanup_duplicates(c, existing)
         client.api.score_configs.delete.assert_not_called()
 
@@ -194,7 +196,9 @@ class TestCleanupDuplicates:
         client = MagicMock()
         client.api.score_configs.delete.return_value = None
         # Config with a real date — should be kept as the "oldest"
-        with_date = _make_config("retrieval_relevance", "id-with-date", "2026-01-01T00:00:00Z")
+        with_date = _make_config(
+            "retrieval_relevance", "id-with-date", "2026-01-01T00:00:00Z"
+        )
         # Config with no created_at attribute — fallback "9999-99-99" sorts last, gets deleted
         no_date = MagicMock()
         no_date.name = "retrieval_relevance"
@@ -260,21 +264,25 @@ class TestMainIdempotency:
     def test_cleanup_duplicates_flag_triggers_dedup(self):
         older = _make_config("retrieval_relevance", "id-old", "2026-01-01T00:00:00Z")
         newer = _make_config("retrieval_relevance", "id-new", "2026-02-01T00:00:00Z")
-        other_existing = [_make_config(n) for n in ALL_CONFIG_NAMES if n != "retrieval_relevance"]
+        other_existing = [
+            _make_config(n) for n in ALL_CONFIG_NAMES if n != "retrieval_relevance"
+        ]
 
         # After cleanup, deduped list returned
-        deduped = [_make_config("retrieval_relevance", "id-old")] + other_existing
+        deduped = [_make_config("retrieval_relevance", "id-old"), *other_existing]
 
         client = MagicMock()
         client.api.score_configs.list.side_effect = [
-            _make_list_response([older, newer] + other_existing),  # initial fetch
-            _make_list_response(deduped),                          # post-cleanup fetch
+            _make_list_response([older, newer, *other_existing]),  # initial fetch
+            _make_list_response(deduped),  # post-cleanup fetch
         ]
         client.api.score_configs.create.return_value = MagicMock()
         client.api.score_configs.delete.return_value = None
         client.flush.return_value = None
 
-        rc, c = _run_main(client, argv=["create_score_configs.py", "--cleanup-duplicates"])
+        rc, c = _run_main(
+            client, argv=["create_score_configs.py", "--cleanup-duplicates"]
+        )
 
         assert rc == 0
         # Duplicate deleted

@@ -11,9 +11,8 @@ FastAPI monitoring service following 2026 best practices:
 import asyncio
 import logging
 import os
-from typing import Any, Dict, Optional
-
 import warnings
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse, Response
@@ -244,10 +243,15 @@ async def update_metrics_periodically():
                 except Exception as e:
                     logger.warning(
                         "metrics_update_failed",
-                        extra={"collection": sanitize_log_input(collection_name), "error": sanitize_log_input(str(e))},
+                        extra={
+                            "collection": sanitize_log_input(collection_name),
+                            "error": sanitize_log_input(str(e)),
+                        },
                     )
         except Exception as e:
-            logger.error("metrics_updater_error", extra={"error": sanitize_log_input(str(e))})
+            logger.error(
+                "metrics_updater_error", extra={"error": sanitize_log_input(str(e))}
+            )
 
         await asyncio.sleep(60)  # Update every 60 seconds
 
@@ -364,7 +368,10 @@ async def health():
             except Exception as e:
                 logger.warning(
                     "stats_check_failed",
-                    extra={"collection": sanitize_log_input(collection_name), "error": sanitize_log_input(str(e))},
+                    extra={
+                        "collection": sanitize_log_input(collection_name),
+                        "error": sanitize_log_input(str(e)),
+                    },
                 )
 
         # Determine status based on warnings
@@ -426,7 +433,9 @@ async def readiness():
         logger.info("readiness_check_passed", extra={"qdrant_available": True})
         return {"status": "ready", "qdrant_available": True}
     except Exception as e:
-        logger.warning("readiness_check_failed", extra={"error": sanitize_log_input(str(e))})
+        logger.warning(
+            "readiness_check_failed", extra={"error": sanitize_log_input(str(e))}
+        )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "not_ready", "qdrant_available": False},
@@ -481,7 +490,10 @@ async def get_memory(memory_id: str, collection: str = "code-patterns"):
     except UnexpectedResponse as e:
         logger.error(
             "qdrant_error",
-            extra={"error": sanitize_log_input(str(e)), "memory_id": sanitize_log_input(memory_id)},
+            extra={
+                "error": sanitize_log_input(str(e)),
+                "memory_id": sanitize_log_input(memory_id),
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Qdrant unavailable"

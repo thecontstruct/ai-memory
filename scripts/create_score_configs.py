@@ -21,8 +21,8 @@ Requires env vars: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL
 PLAN-012 Phase 2 — Section 5.6
 """
 
-import sys
 import argparse
+import sys
 
 
 def _fetch_existing_configs(langfuse) -> dict[str, list]:
@@ -66,7 +66,9 @@ def _cleanup_duplicates(langfuse, existing: dict[str, list]) -> None:
             continue
         # Sort by created_at ascending, keep first, delete the rest
         try:
-            sorted_configs = sorted(configs, key=lambda c: getattr(c, "created_at", "9999-99-99"))
+            sorted_configs = sorted(
+                configs, key=lambda c: getattr(c, "created_at", "9999-99-99")
+            )
         except Exception:
             sorted_configs = configs
 
@@ -79,11 +81,15 @@ def _cleanup_duplicates(langfuse, existing: dict[str, list]) -> None:
                 langfuse.api.score_configs.delete(cfg_id)
                 print(f"  [DEL] Removed duplicate config '{name}' id={cfg_id}")
             except Exception as exc:
-                print(f"  [WARN] Could not delete duplicate '{name}' id={cfg_id}: {exc}")
+                print(
+                    f"  [WARN] Could not delete duplicate '{name}' id={cfg_id}: {exc}"
+                )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create Langfuse score configs idempotently")
+    parser = argparse.ArgumentParser(
+        description="Create Langfuse score configs idempotently"
+    )
     parser.add_argument(
         "--cleanup-duplicates",
         action="store_true",
@@ -106,7 +112,9 @@ def main() -> int:
         print("Fetching existing Score Configs from Langfuse...")
         existing = _fetch_existing_configs(langfuse)
         if existing:
-            print(f"  Found {sum(len(v) for v in existing.values())} existing config(s): {list(existing.keys())}")
+            print(
+                f"  Found {sum(len(v) for v in existing.values())} existing config(s): {list(existing.keys())}"
+            )
         else:
             print("  No existing configs found.")
 

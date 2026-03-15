@@ -7,9 +7,9 @@ Core pipeline:
   1. Load evaluator config + evaluator definitions
   2. Per evaluator, read target: "trace" or "observation" (per-evaluator YAML field)
   3. Trace path (EV-05, EV-06): page-based pagination via trace.list()
-     — uses from_timestamp/to_timestamp/page/meta.total_pages (V3 trace API)
-  4. Observation path (EV-01–EV-04): cursor-based pagination via observations.get_many()
-     — uses from_start_time/to_start_time/cursor/meta.next_cursor (V3 observation API, BUG-217)
+     - uses from_timestamp/to_timestamp/page/meta.total_pages (V3 trace API)
+  4. Observation path (EV-01-EV-04): cursor-based pagination via observations.get_many()
+     - uses from_start_time/to_start_time/cursor/meta.next_cursor (V3 observation API, BUG-217)
   5. Filter observations by name (event_type) — server-side via name= parameter (Path B)
   6. Sample traces/observations per evaluator's sampling_rate
   7. Evaluate each trace/observation via configurable LLM judge
@@ -183,7 +183,9 @@ class EvaluatorRunner:
         obs_name = str(getattr(observation, "name", "") or "")
         obs_input = str(getattr(observation, "input", "") or "")[:TRACE_CONTENT_MAX]
         obs_output = str(getattr(observation, "output", "") or "")[:TRACE_CONTENT_MAX]
-        obs_metadata = str(getattr(observation, "metadata", {}) or {})[:TRACE_CONTENT_MAX]
+        obs_metadata = str(getattr(observation, "metadata", {}) or {})[
+            :TRACE_CONTENT_MAX
+        ]
 
         return (
             f"{template}\n\n"
@@ -313,7 +315,8 @@ class EvaluatorRunner:
                             result = self.evaluator_config.evaluate(prompt)
                             if result.get("score") is None:
                                 logger.warning(
-                                    "Evaluator returned null score for observation %s", obs_id
+                                    "Evaluator returned null score for observation %s",
+                                    obs_id,
                                 )
                                 continue
 
@@ -333,11 +336,16 @@ class EvaluatorRunner:
                                 # R1-F3: validate categorical value against defined categories
                                 if score_type == "CATEGORICAL":
                                     valid_categories = evaluator.get("categories", [])
-                                    if valid_categories and str(result["score"]) not in valid_categories:
+                                    if (
+                                        valid_categories
+                                        and str(result["score"]) not in valid_categories
+                                    ):
                                         logger.warning(
                                             "Observation %s: categorical value %r not in "
                                             "categories %s — skipping",
-                                            obs_id, result["score"], valid_categories,
+                                            obs_id,
+                                            result["score"],
+                                            valid_categories,
                                         )
                                         continue
                                 langfuse.create_score(
@@ -356,13 +364,17 @@ class EvaluatorRunner:
                                 # R2-F2: audit log only written when not dry_run
                                 self._append_audit_log(
                                     {
-                                        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                                        "timestamp": datetime.now(
+                                            tz=timezone.utc
+                                        ).isoformat(),
                                         "evaluator_id": evaluator.get("id"),
                                         "evaluator_name": ev_name,
                                         "trace_id": trace_id,
                                         "observation_id": obs_id,
                                         "score": result["score"],
-                                        "reasoning": str(result.get("reasoning", ""))[:500],
+                                        "reasoning": str(result.get("reasoning", ""))[
+                                            :500
+                                        ],
                                         "dry_run": dry_run,
                                     }
                                 )
@@ -382,7 +394,9 @@ class EvaluatorRunner:
                             continue
 
                     # Cursor-based stop condition — no next cursor means last page
-                    next_cursor = getattr(obs_response.meta, "next_cursor", None)  # R2-F1
+                    next_cursor = getattr(
+                        obs_response.meta, "next_cursor", None
+                    )  # R2-F1
                     if not next_cursor or not observations:
                         break
                     cursor = next_cursor
@@ -477,11 +491,16 @@ class EvaluatorRunner:
                             # R1-F3: validate categorical value against defined categories
                             if score_type == "CATEGORICAL":
                                 valid_categories = evaluator.get("categories", [])
-                                if valid_categories and str(result["score"]) not in valid_categories:
+                                if (
+                                    valid_categories
+                                    and str(result["score"]) not in valid_categories
+                                ):
                                     logger.warning(
                                         "Trace %s: categorical value %r not in "
                                         "categories %s — skipping",
-                                        trace.id, result["score"], valid_categories,
+                                        trace.id,
+                                        result["score"],
+                                        valid_categories,
                                     )
                                     continue
                             langfuse.create_score(
@@ -586,7 +605,9 @@ class EvaluatorRunner:
                 # Per-evaluator target field is source of truth (DEPRECATED: global evaluation_targets)
                 target = evaluator.get("target", "trace")
 
-                print(f"\n--- Running {evaluator.get('id', '?')}: {ev_name} (target={target}) ---")
+                print(
+                    f"\n--- Running {evaluator.get('id', '?')}: {ev_name} (target={target}) ---"
+                )
 
                 if target == "observation":
                     f, s, e, sc = self._run_observation_evaluator(

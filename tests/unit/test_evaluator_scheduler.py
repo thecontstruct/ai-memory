@@ -11,7 +11,6 @@ Tests:
 
 import importlib.util
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -29,7 +28,8 @@ except ImportError:
     CRONITER_AVAILABLE = False
 
 pytestmark_croniter = pytest.mark.skipif(
-    not CRONITER_AVAILABLE, reason="croniter not installed — add croniter>=2.0.0 to requirements.txt"
+    not CRONITER_AVAILABLE,
+    reason="croniter not installed — add croniter>=2.0.0 to requirements.txt",
 )
 
 
@@ -54,7 +54,9 @@ _SCHEDULER_PATH = (
 
 def _load_scheduler():
     """Load evaluator_scheduler module via importlib (not on sys.path as a package)."""
-    spec = importlib.util.spec_from_file_location("evaluator_scheduler", _SCHEDULER_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "evaluator_scheduler", _SCHEDULER_PATH
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -114,7 +116,7 @@ class TestCronScheduleParsing:
     @pytestmark_croniter
     def test_croniter_returns_future_datetime(self):
         """croniter.get_next() returns a datetime after 'now'."""
-        from croniter import croniter  # noqa: PLC0415
+        from croniter import croniter
 
         now = datetime(2026, 3, 14, 4, 0, 0, tzinfo=timezone.utc)
         cron = croniter("0 5 * * *", now)
@@ -128,7 +130,7 @@ class TestCronScheduleParsing:
     @pytestmark_croniter
     def test_croniter_sleep_seconds_positive(self):
         """sleep_seconds should always be positive (next run is in the future)."""
-        from croniter import croniter  # noqa: PLC0415
+        from croniter import croniter
 
         now = datetime(2026, 3, 14, 4, 59, 59, tzinfo=timezone.utc)
         cron = croniter("0 5 * * *", now)
@@ -177,19 +179,21 @@ class TestScheduleDisabled:
         mod = _load_scheduler()
         mod._shutdown_requested = False
 
-        call_count = 0
+        _call_count = 0
 
         def fake_interruptible_sleep(seconds, chunk=5.0):
             # After one sleep (schedule disabled), set shutdown to stop the loop
             mod._shutdown_requested = True
 
-        with patch.object(mod, "_interruptible_sleep", side_effect=fake_interruptible_sleep):
-            with patch.object(mod, "load_schedule_config", return_value={"enabled": False}):
-                with patch(
-                    "memory.evaluator.EvaluatorRunner"
-                ) as mock_runner_cls:
-                    mod.run_scheduler(str(config))
-                    mock_runner_cls.assert_not_called()
+        with (
+            patch.object(
+                mod, "_interruptible_sleep", side_effect=fake_interruptible_sleep
+            ),
+            patch.object(mod, "load_schedule_config", return_value={"enabled": False}),
+            patch("memory.evaluator.EvaluatorRunner") as mock_runner_cls,
+        ):
+            mod.run_scheduler(str(config))
+            mock_runner_cls.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -225,17 +229,25 @@ class TestEvaluationFailure:
         _next_run = datetime(2026, 3, 14, 5, 0, 0, tzinfo=timezone.utc)
         mock_croniter_mod, _, _ = _make_croniter_mock(_next_run)
 
-        with patch.dict(sys.modules, {"croniter": mock_croniter_mod}):
-            with patch.object(mod, "_interruptible_sleep", side_effect=fake_interruptible_sleep):
-                with patch.object(
-                    mod,
-                    "load_schedule_config",
-                    return_value={"enabled": True, "cron": "* * * * *", "lookback_hours": 1},
-                ):
-                    with patch.object(mod, "_touch_health_file") as mock_touch:
-                        with patch("memory.evaluator.EvaluatorRunner", return_value=mock_runner):
-                            # Should NOT raise — errors are caught and logged
-                            mod.run_scheduler(str(config))
+        with (
+            patch.dict(sys.modules, {"croniter": mock_croniter_mod}),
+            patch.object(
+                mod, "_interruptible_sleep", side_effect=fake_interruptible_sleep
+            ),
+            patch.object(
+                mod,
+                "load_schedule_config",
+                return_value={
+                    "enabled": True,
+                    "cron": "* * * * *",
+                    "lookback_hours": 1,
+                },
+            ),
+            patch.object(mod, "_touch_health_file") as mock_touch,
+            patch("memory.evaluator.EvaluatorRunner", return_value=mock_runner),
+        ):
+            # Should NOT raise — errors are caught and logged
+            mod.run_scheduler(str(config))
 
         # Runner was called at least once
         mock_runner.run.assert_called()
@@ -275,16 +287,22 @@ class TestEvaluationFailure:
         _next_run = datetime(2026, 3, 14, 5, 0, 0, tzinfo=timezone.utc)
         mock_croniter_mod, _, _ = _make_croniter_mock(_next_run)
 
-        with patch.dict(sys.modules, {"croniter": mock_croniter_mod}):
-            with patch.object(mod, "_interruptible_sleep", side_effect=fake_sleep):
-                with patch.object(
-                    mod,
-                    "load_schedule_config",
-                    return_value={"enabled": True, "cron": "* * * * *", "lookback_hours": 1},
-                ):
-                    with patch.object(mod, "_touch_health_file", side_effect=fake_touch):
-                        with patch("memory.evaluator.EvaluatorRunner", return_value=mock_runner):
-                            mod.run_scheduler(str(config))
+        with (
+            patch.dict(sys.modules, {"croniter": mock_croniter_mod}),
+            patch.object(mod, "_interruptible_sleep", side_effect=fake_sleep),
+            patch.object(
+                mod,
+                "load_schedule_config",
+                return_value={
+                    "enabled": True,
+                    "cron": "* * * * *",
+                    "lookback_hours": 1,
+                },
+            ),
+            patch.object(mod, "_touch_health_file", side_effect=fake_touch),
+            patch("memory.evaluator.EvaluatorRunner", return_value=mock_runner),
+        ):
+            mod.run_scheduler(str(config))
 
         # Health file should NOT be touched after the failed evaluation
         assert touch_after_startup[0] == 0
@@ -310,14 +328,16 @@ class TestHealthFile:
             # Immediately shut down after first sleep
             mod._shutdown_requested = True
 
-        with patch.object(mod, "_touch_health_file", side_effect=fake_touch):
-            with patch.object(
+        with (
+            patch.object(mod, "_touch_health_file", side_effect=fake_touch),
+            patch.object(
                 mod,
                 "load_schedule_config",
                 return_value={"enabled": False},
-            ):
-                with patch.object(mod, "_interruptible_sleep", side_effect=fake_sleep):
-                    mod.run_scheduler(str(tmp_path / "evaluator_config.yaml"))
+            ),
+            patch.object(mod, "_interruptible_sleep", side_effect=fake_sleep),
+        ):
+            mod.run_scheduler(str(tmp_path / "evaluator_config.yaml"))
 
         # At minimum, touched on startup
         assert len(touch_calls) >= 1
@@ -358,16 +378,22 @@ class TestHealthFile:
         _next_run = datetime(2026, 3, 14, 5, 0, 0, tzinfo=timezone.utc)
         mock_croniter_mod, _, _ = _make_croniter_mock(_next_run)
 
-        with patch.dict(sys.modules, {"croniter": mock_croniter_mod}):
-            with patch.object(mod, "_touch_health_file", side_effect=fake_touch):
-                with patch.object(mod, "_interruptible_sleep", side_effect=fake_sleep):
-                    with patch.object(
-                        mod,
-                        "load_schedule_config",
-                        return_value={"enabled": True, "cron": "* * * * *", "lookback_hours": 1},
-                    ):
-                        with patch("memory.evaluator.EvaluatorRunner", return_value=mock_runner):
-                            mod.run_scheduler(str(config))
+        with (
+            patch.dict(sys.modules, {"croniter": mock_croniter_mod}),
+            patch.object(mod, "_touch_health_file", side_effect=fake_touch),
+            patch.object(mod, "_interruptible_sleep", side_effect=fake_sleep),
+            patch.object(
+                mod,
+                "load_schedule_config",
+                return_value={
+                    "enabled": True,
+                    "cron": "* * * * *",
+                    "lookback_hours": 1,
+                },
+            ),
+            patch("memory.evaluator.EvaluatorRunner", return_value=mock_runner),
+        ):
+            mod.run_scheduler(str(config))
 
         # Touched on startup + once after successful run = at least 2 calls
         assert touch_calls[0] >= 2

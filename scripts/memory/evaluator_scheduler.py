@@ -69,7 +69,7 @@ def _touch_health_file() -> None:
 # =============================================================================
 
 
-def _handle_sigterm(signum, frame) -> None:  # noqa: ARG001
+def _handle_sigterm(signum, frame) -> None:
     """SIGTERM handler — request graceful shutdown."""
     global _shutdown_requested
     logger.info("sigterm_received — requesting graceful shutdown")
@@ -81,7 +81,7 @@ def _register_langfuse_shutdown() -> None:
 
     def _langfuse_shutdown() -> None:
         try:
-            from langfuse import get_client  # noqa: PLC0415
+            from langfuse import get_client
 
             client = get_client()
             if client:
@@ -107,7 +107,7 @@ def load_schedule_config(config_path: str) -> dict:
     Returns:
         Schedule config dict with keys: enabled, cron, lookback_hours
     """
-    import yaml  # noqa: PLC0415
+    import yaml
 
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -174,7 +174,7 @@ def run_scheduler(config_path: str = CONFIG_PATH) -> None:
         lookback_hours = int(schedule.get("lookback_hours", 24))
 
         # Calculate next run time using croniter
-        from croniter import croniter  # noqa: PLC0415
+        from croniter import croniter
 
         now = datetime.now(tz=timezone.utc)
         try:
@@ -222,7 +222,7 @@ def run_scheduler(config_path: str = CONFIG_PATH) -> None:
         )
 
         try:
-            from memory.evaluator import EvaluatorRunner  # noqa: PLC0415
+            from memory.evaluator import EvaluatorRunner
 
             runner = EvaluatorRunner(config_path)
             summary = runner.run(since=since)

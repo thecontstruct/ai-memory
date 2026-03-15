@@ -7,10 +7,10 @@ import pytest
 
 from memory.evaluator.provider import EvaluatorConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_config(provider="ollama", max_retries=3) -> EvaluatorConfig:
     cfg = EvaluatorConfig(provider=provider, max_retries=max_retries)
@@ -19,7 +19,7 @@ def _make_config(provider="ollama", max_retries=3) -> EvaluatorConfig:
 
 def _http_error(status_code: int, retry_after: str | None = None):
     """Create a mock exception that looks like an HTTP error."""
-    exc = Exception(f"HTTP {status_code}")
+    exc = RuntimeError(f"HTTP {status_code}")
     exc.status_code = status_code
     if retry_after is not None:
         response = Mock()
@@ -42,6 +42,7 @@ def _good_openai_response(text: str = '{"score": 0.9, "reasoning": "ok"}'):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEvaluatorRetry:
 
@@ -88,10 +89,14 @@ class TestEvaluatorRetry:
 
         sleep_calls = []
 
-        with patch("memory.evaluator.provider.time.sleep", side_effect=sleep_calls.append):
-            with patch("memory.evaluator.provider.random.uniform", return_value=0.0):
-                with pytest.raises(Exception):
-                    cfg.evaluate("test prompt")
+        with (
+            patch(
+                "memory.evaluator.provider.time.sleep", side_effect=sleep_calls.append
+            ),
+            patch("memory.evaluator.provider.random.uniform", return_value=0.0),
+            pytest.raises(RuntimeError),
+        ):
+            cfg.evaluate("test prompt")
 
         # With max_retries=3 we sleep 3 times (attempts 0,1,2) before final failure
         assert len(sleep_calls) == 3
@@ -107,11 +112,15 @@ class TestEvaluatorRetry:
         mock_client.chat.completions.create.side_effect = _http_error(503)
         cfg._client = mock_client
 
-        with patch("memory.evaluator.provider.time.sleep"):
-            with pytest.raises(Exception, match="HTTP 503"):
-                cfg.evaluate("test prompt")
+        with (
+            patch("memory.evaluator.provider.time.sleep"),
+            pytest.raises(Exception, match="HTTP 503"),
+        ):
+            cfg.evaluate("test prompt")
 
-        assert mock_client.chat.completions.create.call_count == 3  # initial + 2 retries
+        assert (
+            mock_client.chat.completions.create.call_count == 3
+        )  # initial + 2 retries
 
     def test_non_retryable_400_fails_immediately(self):
         """400 errors should not be retried."""
@@ -143,9 +152,13 @@ class TestEvaluatorRetry:
 
         sleep_calls = []
 
-        with patch("memory.evaluator.provider.time.sleep", side_effect=sleep_calls.append):
-            with patch("memory.evaluator.provider.random.uniform", return_value=0.0):
-                result = cfg.evaluate("test prompt")
+        with (
+            patch(
+                "memory.evaluator.provider.time.sleep", side_effect=sleep_calls.append
+            ),
+            patch("memory.evaluator.provider.random.uniform", return_value=0.0),
+        ):
+            result = cfg.evaluate("test prompt")
 
         assert result["score"] == 0.9
         # First sleep should use Retry-After=5 as base (plus zero jitter)
@@ -202,9 +215,11 @@ class TestEvaluatorRetry:
         mock_client.chat.completions.create.side_effect = _http_error(500)
         cfg._client = mock_client
 
-        with patch("memory.evaluator.provider.time.sleep"):
-            with pytest.raises(Exception):
-                cfg.evaluate("test prompt")
+        with (
+            patch("memory.evaluator.provider.time.sleep"),
+            pytest.raises(RuntimeError),
+        ):
+            cfg.evaluate("test prompt")
 
         assert cfg._client is None
 
@@ -215,8 +230,10 @@ class TestEvaluatorRetry:
         mock_client.chat.completions.create.side_effect = ConnectionError("refused")
         cfg._client = mock_client
 
-        with patch("memory.evaluator.provider.time.sleep"):
-            with pytest.raises(ConnectionError):
-                cfg.evaluate("test prompt")
+        with (
+            patch("memory.evaluator.provider.time.sleep"),
+            pytest.raises(ConnectionError),
+        ):
+            cfg.evaluate("test prompt")
 
         assert cfg._client is None
