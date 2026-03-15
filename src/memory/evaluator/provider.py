@@ -73,11 +73,19 @@ class EvaluatorConfig:
         if self.provider == "ollama":
             from openai import OpenAI
 
+            api_key = os.environ.get("OLLAMA_API_KEY", "")
+            # Auto-detect cloud vs local: if API key is set and no explicit
+            # base_url, use Ollama cloud. Otherwise default to local.
+            if self.base_url:
+                base_url = self.base_url
+            elif api_key:
+                base_url = "https://api.ollama.com/v1"
+            else:
+                base_url = "http://localhost:11434/v1"
+
             client = OpenAI(
-                base_url=self.base_url or "http://localhost:11434/v1",
-                api_key=os.environ.get(
-                    "OLLAMA_API_KEY", "ollama"
-                ),  # Cloud: set OLLAMA_API_KEY; local: ignored
+                base_url=base_url,
+                api_key=api_key or "ollama",  # Local Ollama ignores key
             )
 
         elif self.provider == "openrouter":

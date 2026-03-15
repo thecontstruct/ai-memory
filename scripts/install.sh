@@ -1067,6 +1067,9 @@ update_shared_scripts() {
         log_debug "Templates updated"
     fi
 
+    # Re-import user .env customizations (new env vars from updates, e.g. OLLAMA_API_KEY)
+    import_user_env
+
     if [[ $updated_count -gt 0 || $hooks_count -gt 0 || $docker_count -gt 0 ]]; then
         log_success "Updated $updated_count shared scripts, $hooks_count hook scripts, $docker_count docker files"
         if [[ $archived_count -gt 0 ]]; then
