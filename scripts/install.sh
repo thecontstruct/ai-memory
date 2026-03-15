@@ -1037,6 +1037,18 @@ update_shared_scripts() {
         log_debug "Synced $docker_count Docker files to INSTALL_DIR"
     fi
 
+    # Sync evaluator config and definitions (S-16.5, DEC-110)
+    # Required by evaluator-scheduler container at runtime
+    if [[ -f "$SCRIPT_DIR/../evaluator_config.yaml" ]]; then
+        cp "$SCRIPT_DIR/../evaluator_config.yaml" "$INSTALL_DIR/evaluator_config.yaml" || log_warning "Failed to copy evaluator_config.yaml"
+        log_debug "Updated evaluator_config.yaml"
+    fi
+    if [[ -d "$SCRIPT_DIR/../evaluators" ]]; then
+        mkdir -p "$INSTALL_DIR/evaluators"
+        cp -r "$SCRIPT_DIR/../evaluators/"* "$INSTALL_DIR/evaluators/" 2>/dev/null || true
+        log_debug "Updated evaluators/ directory"
+    fi
+
     # Update templates (new templates added in updates must reach installed dir)
     if [[ -d "$SCRIPT_DIR/../templates" ]]; then
         mkdir -p "$INSTALL_DIR/templates"
@@ -1574,6 +1586,17 @@ copy_files() {
         log_debug "Copying templates..."
         mkdir -p "$INSTALL_DIR/templates"
         cp -r "$SOURCE_DIR/templates/"* "$INSTALL_DIR/templates/"
+    fi
+
+    # Copy evaluator config and definitions (S-16.5, DEC-110)
+    # Required by evaluator-scheduler container at runtime (../evaluator_config.yaml, ../evaluators/)
+    log_debug "Copying evaluator configuration..."
+    if [[ -f "$SOURCE_DIR/evaluator_config.yaml" ]]; then
+        cp "$SOURCE_DIR/evaluator_config.yaml" "$INSTALL_DIR/evaluator_config.yaml" || log_warning "Failed to copy evaluator_config.yaml"
+    fi
+    if [[ -d "$SOURCE_DIR/evaluators" ]]; then
+        mkdir -p "$INSTALL_DIR/evaluators"
+        cp -r "$SOURCE_DIR/evaluators/"* "$INSTALL_DIR/evaluators/" 2>/dev/null || log_warning "Failed to copy evaluators directory"
     fi
 
     # Copy CHANGELOG for reference (TD-170)
