@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # LANGFUSE: V3 SDK ONLY. See LANGFUSE-INTEGRATION-SPEC.md
 # FORBIDDEN: Langfuse() constructor, start_span(), start_generation(), langfuse_context
-# REQUIRED: get_client(), api.score_configs.create(), api.score_configs.list(), flush()
+# REQUIRED: get_client(), api.score_configs.create(), api.score_configs.get(), flush()
 """Idempotent Score Config setup in Langfuse.
 
 Creates 6 Score Configs that enforce validation schemas on evaluation scores.
@@ -35,7 +35,7 @@ def _fetch_existing_configs(langfuse) -> dict[str, list]:
     page = 1
     while True:
         try:
-            response = langfuse.api.score_configs.list(page=page, limit=100)
+            response = langfuse.api.score_configs.get(page=page, limit=100)
         except Exception as exc:
             print(f"  [WARN] Could not list existing score configs: {exc}")
             break

@@ -109,9 +109,9 @@ def _make_client_with_existing(existing_names: list[str], list_side_effect=None)
     client = MagicMock()
     configs = [_make_config(n) for n in existing_names]
     if list_side_effect is not None:
-        client.api.score_configs.list.side_effect = list_side_effect
+        client.api.score_configs.get.side_effect = list_side_effect
     else:
-        client.api.score_configs.list.return_value = _make_list_response(configs)
+        client.api.score_configs.get.return_value = _make_list_response(configs)
     client.api.score_configs.create.return_value = MagicMock()
     client.api.score_configs.delete.return_value = None
     client.flush.return_value = None
@@ -143,14 +143,14 @@ class TestFetchExistingConfigs:
             _make_config("retrieval_relevance", "id-2"),
         ]
         client = MagicMock()
-        client.api.score_configs.list.return_value = _make_list_response(configs)
+        client.api.score_configs.get.return_value = _make_list_response(configs)
         with _patched_module(client) as (mod, c):
             result = mod._fetch_existing_configs(c)
         assert len(result["retrieval_relevance"]) == 2
 
     def test_handles_list_api_error_gracefully(self):
         client = MagicMock()
-        client.api.score_configs.list.side_effect = RuntimeError("network error")
+        client.api.score_configs.get.side_effect = RuntimeError("network error")
         with _patched_module(client) as (mod, c):
             result = mod._fetch_existing_configs(c)
         assert result == {}
@@ -272,7 +272,7 @@ class TestMainIdempotency:
         deduped = [_make_config("retrieval_relevance", "id-old"), *other_existing]
 
         client = MagicMock()
-        client.api.score_configs.list.side_effect = [
+        client.api.score_configs.get.side_effect = [
             _make_list_response([older, newer, *other_existing]),  # initial fetch
             _make_list_response(deduped),  # post-cleanup fetch
         ]
