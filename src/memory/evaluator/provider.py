@@ -31,7 +31,7 @@ class EvaluatorConfig:
     provider: Literal["ollama", "openrouter", "anthropic", "openai", "custom"] = (
         "ollama"
     )
-    model_name: str = "llama3.2:8b"
+    model_name: str = "gemma3:4b"
     base_url: str | None = None
     temperature: float = 0.0  # Deterministic for evaluation
     max_tokens: int = (
@@ -50,7 +50,7 @@ class EvaluatorConfig:
         model_cfg = data.get("evaluator_model", {})
         return cls(
             provider=model_cfg.get("provider", "ollama"),
-            model_name=model_cfg.get("model_name", "llama3.2:8b"),
+            model_name=model_cfg.get("model_name", "gemma3:4b"),
             base_url=model_cfg.get("base_url"),
             temperature=model_cfg.get("temperature", 0.0),
             max_tokens=model_cfg.get("max_tokens", 4096),
