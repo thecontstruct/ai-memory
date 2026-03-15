@@ -342,9 +342,8 @@
    - Assess applicability to BMAD project
 
 3. **Documentation**
-   - Create `BP-XXX-[topic]-2025.md` file
-   - Store summary in Qdrant `conventions` collection
-   - Update this tracker with findings
+   - Store findings in Qdrant `conventions` collection
+   - Update this tracker with findings and recommendations
 
 4. **Recommendation**
    - State clear recommendation with rationale
@@ -383,8 +382,7 @@ Once all BP-014 through BP-033 are researched:
 
 **Research Phase Complete When**:
 - ✅ All BP-014 through BP-033 have status: COMPLETE
-- ✅ All findings documented in `oversight/knowledge/best-practices/`
-- ✅ All summaries stored in Qdrant `conventions` collection
+- ✅ All findings stored in Qdrant `conventions` collection
 - ✅ This tracker updated with findings and recommendations
 - ✅ Confidence levels assigned (Verified/Informed/Inferred)
 

@@ -115,7 +115,7 @@ The agent follows its own interactive workflow, asking questions and iterating w
 |-------|-------|-----------------|
 | Research | Analyst | `/bmad-bmm-market-research`, `/bmad-bmm-domain-research`, `/bmad-bmm-technical-research` |
 | Discovery | Analyst | `/bmad-bmm-create-product-brief` |
-| Discovery | PM | `/bmad-bmm-create-prd`, `/bmad-bmm-validate-prd`, `/bmad-bmm-edit-prd` |
+| Discovery (or any phase) | PM | `/bmad-bmm-create-prd`, `/bmad-bmm-validate-prd`, `/bmad-bmm-edit-prd` |
 | Architecture | Architect | `/bmad-bmm-create-architecture` |
 | Architecture | PM | `/bmad-bmm-create-epics-and-stories` |
 | Architecture | Architect | `/bmad-bmm-check-implementation-readiness` |

@@ -233,9 +233,10 @@ The system detects task categories from request signals:
 | "analyze image", "describe photo" | `vision` |
 | "generate image", "create picture", "draw" | `image-gen` |
 | "transcribe", "audio", "speech" | `audio` |
-| "text to speech", "tts", "narration", "suno", "music" | `audio-gen` |
-| "generate video", "create video", "runway" | `video-gen` |
+| "text to speech", "tts", "narration", "generate audio", "suno", "music" | `audio-gen` |
+| "generate video", "create video", "runway", "kling", "pika", "luma" | `video-gen` |
 | "quick", "fast", "summarize briefly" | `fast` |
+| No clear signal | `general` |
 
 ### Model Confirmation Gate
 

@@ -174,8 +174,8 @@ Reference: `_ai-memory/pov/data/self-check-constraints.md`
 **Purpose**: Quick-reference checklist for periodic self-checks
 **When Loaded**: Every ~10 messages during a session
 **Contains**:
-- Layer 1 checks (always active, 13 items)
-- Layer 3 checks (during agent dispatch, 4 items including GC-19 and GC-20)
+- Layer 1 checks (always active, 15 items including GC-19 and GC-20)
+- Layer 3 checks (during agent dispatch, 2 items)
 - Quick summary tables
 
 ### 4. `_ai-memory/pov/agents/parzival.md`

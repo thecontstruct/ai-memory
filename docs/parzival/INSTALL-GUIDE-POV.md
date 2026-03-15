@@ -468,7 +468,7 @@ my-project/
 │       ├── constraints/            # Global + phase constraints
 │       ├── data/                   # Reference data (complexity, confidence, escalation, etc.)
 │       ├── workflows/              # Phase workflows
-│       ├── skills/                 # 7 Parzival dispatch skills (source of truth)
+│       ├── skills/                 # 7 Parzival skills (source of truth)
 │       │   ├── aim-parzival-bootstrap/
 │       │   ├── aim-parzival-constraints/
 │       │   ├── aim-parzival-team-builder/
