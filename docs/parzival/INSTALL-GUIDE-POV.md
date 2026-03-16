@@ -70,8 +70,8 @@ Parzival operates under **five non-negotiable rules** that prevent behavioral dr
 **Why This Matters:** Over long conversations, AI agents "forget" their core role and start doing implementation work, skipping reviews, and guessing. Parzival uses a **five-layer constraint enforcement system** to maintain consistent oversight behavior even in 50+ message conversations.
 
 📚 **Learn More:**
-- [CONSTRAINTS.md](./pov/agents/parzival/CONSTRAINTS.md) - Complete behavioral rules (394 lines)
-- [CONSTRAINT-ENFORCEMENT-SYSTEM.md](./docs/CONSTRAINT-ENFORCEMENT-SYSTEM.md) - Behavioral architecture
+- [CONSTRAINT-ENFORCEMENT-SYSTEM.md](./CONSTRAINT-ENFORCEMENT-SYSTEM.md) - Behavioral constraint architecture
+- [constraints.md](../../_ai-memory/pov/constraints/global/constraints.md) - Global constraint index (GC-01 through GC-20)
 - [README.md](./README.md) - Source of truth document
 
 ---
@@ -774,9 +774,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ### Official Documentation
 - **[README.md](./README.md)** - Complete source of truth (identity, constraints, duties, architecture)
-- **[CONSTRAINTS.md](./pov/agents/parzival/CONSTRAINTS.md)** - Core behavioral rules (394 lines)
-- **[CONSTRAINT-ENFORCEMENT-SYSTEM.md](./docs/CONSTRAINT-ENFORCEMENT-SYSTEM.md)** - Five-layer behavioral architecture
-- **[PROCEDURES.md](./pov/procedures/PROCEDURES.md)** - Step-by-step operational procedures (878 lines)
+- **[CONSTRAINT-ENFORCEMENT-SYSTEM.md](./CONSTRAINT-ENFORCEMENT-SYSTEM.md)** - Behavioral constraint architecture
+- **[constraints.md](../../_ai-memory/pov/constraints/global/constraints.md)** - Global constraint index (GC-01 through GC-20)
+- **[Workflows](../../_ai-memory/pov/workflows/)** - Step-by-step workflow definitions
 
 ### External Resources
 - [BMAD Method Documentation](https://bmad-method.org/docs)
