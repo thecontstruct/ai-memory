@@ -983,7 +983,15 @@ sync_installed_files() {
     # .claude/skills/ — Claude Code skills (optional)
     if [[ -d "$src_dir/.claude/skills" ]]; then
         log_debug "Copying Claude Code skills..."
-        cp -r "$src_dir/.claude/skills/"* "$dst_dir/.claude/skills/" 2>/dev/null || true
+        (
+            shopt -s nullglob
+            for skill_dir in "$src_dir/.claude/skills/"*/; do
+                local skill_name
+                skill_name=$(basename "$skill_dir")
+                [[ "$skill_name" == "axonify-merge-main" ]] && continue
+                cp -r "$skill_dir" "$dst_dir/.claude/skills/" 2>/dev/null || true
+            done
+        )
     fi
 
     # .claude/agents/ — Claude Code agents (optional)
