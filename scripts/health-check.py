@@ -24,6 +24,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from pathlib import Path
 
 try:
     import httpx
@@ -33,6 +34,34 @@ except ImportError:
         file=sys.stderr,
     )
     sys.exit(1)
+
+
+def _load_install_env() -> None:
+    """Load install-scoped dotenv values without overriding real env vars."""
+    default_install_dir = Path(__file__).resolve().parent.parent
+    install_dir = Path(os.environ.get("AI_MEMORY_INSTALL_DIR", default_install_dir))
+    env_file = install_dir / "docker" / ".env"
+
+    if not env_file.exists():
+        return
+
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
+_load_install_env()
 
 # Configuration from environment (DEC-010: Jina Embeddings v2 Base Code = 768 dimensions)
 EXPECTED_EMBEDDING_DIMENSIONS = int(os.environ.get("VECTOR_DIMENSIONS", "768"))
