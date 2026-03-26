@@ -5,7 +5,7 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Batch GitHub Sync + Include Overrides
+## [2.2.5] - 2026-03-26 — Batch GitHub Sync + Include Overrides
 
 Batched code blob sync with bounded concurrency and path-level include/exclude overrides for GitHub code blob indexing. Cherry-picked from contributor fork ([thecontstruct/ai-memory](https://github.com/thecontstruct/ai-memory)) with 36 code review findings resolved.
 
