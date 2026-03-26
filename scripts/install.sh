@@ -1194,10 +1194,10 @@ update_shared_scripts() {
     local venv_dir="$INSTALL_DIR/.venv"
     if [[ -d "$venv_dir" ]] && [[ -f "$INSTALL_DIR/pyproject.toml" ]]; then
         log_info "Updating Python dependencies in venv..."
-        if "$venv_dir/bin/pip" install --retries 3 --timeout 120 -q -e "$INSTALL_DIR[dev]" 2>/dev/null; then
+        if "$venv_dir/bin/pip" install --retries 3 --timeout 120 -q -e "${INSTALL_DIR}[dev]" 2>/dev/null; then
             log_success "Python dependencies updated"
         else
-            log_warning "Python dependency update failed — run manually: $venv_dir/bin/pip install -e \"$INSTALL_DIR[dev]\""
+            log_warning "Python dependency update failed — run manually: $venv_dir/bin/pip install -e \"${INSTALL_DIR}[dev]\""
         fi
     fi
 
