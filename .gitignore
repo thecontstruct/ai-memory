@@ -95,3 +95,6 @@ scripts/_migration_state.json
 # Backup/verification directories (user-local, not for repo)
 _ai-memory/_ai-memory.restructred/
 _ai-memory/pov.v1.bak/
+
+# AI Memory audit trail (ephemeral/sensitive data)
+.audit/
