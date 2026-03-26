@@ -1,9 +1,22 @@
 name: ai-memory
 
+# Consistent labels for filtering and for wipe/prune guardrails in other tooling.
+# Filter examples:
+#   docker ps --filter label=ai-memory.managed=true
+#   docker volume ls --filter label=ai-memory.managed=true
+x-ai-memory-labels: &ai-memory-labels
+  ai-memory.managed: "true"
+  ai-memory.wipe-policy: "exclude"
+  ai-memory.stack: "core"
+  org.opencontainers.image.vendor: "ai-memory"
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.16.3
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-qdrant
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "qdrant"
     ports:
       - "127.0.0.1:${QDRANT_PORT:-26350}:6333"
       - "127.0.0.1:${QDRANT_GRPC_PORT:-26351}:6334"
@@ -27,6 +40,9 @@ services:
       context: ..
       dockerfile: docker/embedding/Dockerfile
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-embedding
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "embedding"
     ports:
       - "127.0.0.1:${EMBEDDING_PORT:-28080}:8080"
     volumes:
@@ -60,6 +76,9 @@ services:
       context: ..
       dockerfile: monitoring/Dockerfile
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-monitoring-api
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "monitoring-api"
     profiles: ["testing", "monitoring"]
     ports:
       - "127.0.0.1:28000:8000"
@@ -94,6 +113,9 @@ services:
   prometheus-init:
     image: python:3.12-alpine
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-prometheus-init
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "prometheus-init"
     profiles: ["monitoring"]
     volumes:
       - prometheus_runtime:/etc/prometheus/runtime
@@ -116,6 +138,9 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-prometheus
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "prometheus"
     profiles: ["monitoring"]
     ports:
       - "127.0.0.1:29090:9090"
@@ -153,6 +178,9 @@ services:
   pushgateway:
     image: prom/pushgateway:v1.9.0
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-pushgateway
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "pushgateway"
     profiles: ["monitoring"]
     # Enable persistence to retain metrics across restarts (BP-028)
     # BUG-080: Mount volume at /pushgateway (owned by nobody:nobody in image)
@@ -183,6 +211,9 @@ services:
   grafana:
     image: grafana/grafana:12.0.0
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-grafana
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "grafana"
     profiles: ["monitoring"]
     ports:
       - "127.0.0.1:23000:3000"
@@ -238,6 +269,9 @@ services:
       context: ./streamlit
       dockerfile: Dockerfile
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-streamlit
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "streamlit"
     profiles: ["monitoring"]
     # Authentication: Deferred to Phase 2 (TECH-DEBT-076)
     # Requires streamlit-authenticator library or OIDC (BP-040 Section 4)
@@ -304,6 +338,9 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.worker
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-classifier-worker
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "classifier-worker"
     profiles: ["monitoring"]  # Only runs with monitoring profile
     restart: unless-stopped
     environment:
@@ -388,6 +425,9 @@ services:
       context: ..
       dockerfile: docker/github-sync/Dockerfile
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-github-sync
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.service: "github-sync"
     profiles: ["github"]
     environment:
       - QDRANT_HOST=qdrant
@@ -480,18 +520,45 @@ services:
       retries: 3
       start_period: 120s
 
+networks:
+  default:
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.network: "default"
+
 volumes:
   qdrant_storage:
     driver: local
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.volume: "qdrant_storage"
   prometheus_data:
     driver: local
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.volume: "prometheus_data"
   prometheus_runtime:
     driver: local
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.volume: "prometheus_runtime"
   grafana_data:
     driver: local
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.volume: "grafana_data"
   embedding_cache:
     driver: local
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.volume: "embedding_cache"
   pushgateway_data:
     driver: local
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.volume: "pushgateway_data"
   classifier_queue:
     driver: local
+    labels:
+      <<: *ai-memory-labels
+      ai-memory.volume: "classifier_queue"

@@ -1,5 +1,9 @@
 FROM python:3.12.8-slim
 
+LABEL ai-memory.managed="true"
+LABEL ai-memory.wipe-policy="exclude"
+LABEL org.opencontainers.image.vendor="ai-memory"
+
 WORKDIR /app
 
 # Install system dependencies (curl for healthcheck fallback)

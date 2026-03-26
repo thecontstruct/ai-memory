@@ -6,12 +6,21 @@
 # All services use profile "langfuse" — opt-in, not started by default.
 # Joins the existing ai-memory_default network (external: true).
 
+x-ai-memory-labels-langfuse: &ai-memory-labels-langfuse
+  ai-memory.managed: "true"
+  ai-memory.wipe-policy: "exclude"
+  ai-memory.stack: "langfuse"
+  org.opencontainers.image.vendor: "ai-memory"
+
 services:
 
   # ─── Langfuse Web UI ───────────────────────────────────────────────────────
   langfuse-web:
     image: docker.io/langfuse/langfuse:3
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-langfuse-web
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.service: "langfuse-web"
     profiles: ["langfuse"]
     ports:
       - "127.0.0.1:${LANGFUSE_WEB_PORT:-23100}:3000"
@@ -82,6 +91,9 @@ services:
   langfuse-worker:
     image: docker.io/langfuse/langfuse-worker:3
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-langfuse-worker
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.service: "langfuse-worker"
     profiles: ["langfuse"]
     ports:
       - "127.0.0.1:${LANGFUSE_WORKER_PORT:-23130}:3030"
@@ -146,6 +158,9 @@ services:
   langfuse-postgres:
     image: docker.io/postgres:17
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-langfuse-postgres
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.service: "langfuse-postgres"
     profiles: ["langfuse"]
     ports:
       - "127.0.0.1:${LANGFUSE_POSTGRES_PORT:-25432}:5432"
@@ -171,6 +186,9 @@ services:
   langfuse-clickhouse:
     image: docker.io/clickhouse/clickhouse-server:24
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-langfuse-clickhouse
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.service: "langfuse-clickhouse"
     profiles: ["langfuse"]
     ports:
       - "127.0.0.1:${LANGFUSE_CLICKHOUSE_PORT:-28123}:8123"
@@ -197,6 +215,9 @@ services:
   langfuse-redis:
     image: docker.io/redis:7
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-langfuse-redis
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.service: "langfuse-redis"
     profiles: ["langfuse"]
     ports:
       - "127.0.0.1:${LANGFUSE_REDIS_PORT:-26379}:6379"
@@ -218,6 +239,9 @@ services:
   langfuse-minio:
     image: cgr.dev/chainguard/minio
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-langfuse-minio
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.service: "langfuse-minio"
     profiles: ["langfuse"]
     ports:
       - "127.0.0.1:${LANGFUSE_MINIO_PORT:-29000}:9000"
@@ -250,6 +274,9 @@ services:
       context: ../
       dockerfile: docker/Dockerfile.worker
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-langfuse-trace-flush-worker
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.service: "langfuse-trace-flush-worker"
     profiles: ["langfuse"]
     command: python -m memory.trace_flush_worker
     volumes:
@@ -294,6 +321,9 @@ services:
       context: ../
       dockerfile: docker/Dockerfile.evaluator-scheduler
     container_name: ${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}-evaluator-scheduler
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.service: "evaluator-scheduler"
     profiles: ["langfuse"]
     volumes:
       - ../src:/app/src:ro
@@ -353,5 +383,14 @@ networks:
 # ─── Volumes ─────────────────────────────────────────────────────────────────
 volumes:
   langfuse-postgres-data:
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.volume: "langfuse-postgres-data"
   langfuse-clickhouse-data:
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.volume: "langfuse-clickhouse-data"
   langfuse-minio-data:
+    labels:
+      <<: *ai-memory-labels-langfuse
+      ai-memory.volume: "langfuse-minio-data"
