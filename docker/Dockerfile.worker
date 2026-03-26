@@ -1,5 +1,9 @@
 FROM python:3.12.8-slim
 
+LABEL ai-memory.managed="true"
+LABEL ai-memory.wipe-policy="exclude"
+LABEL org.opencontainers.image.vendor="ai-memory"
+
 # Set working directory
 WORKDIR /app
 
