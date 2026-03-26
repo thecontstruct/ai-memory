@@ -5,6 +5,142 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.4] - 2026-03-26
+
+Parzival V2.1 shim architecture, 7 dispatch skills, and PLAN-018 Zero Debt Sprint: floating-point precision, reclassification protection, log level env var rename, Langfuse optional deps, SQL injection hardening, and full semantic tag coverage across all 108 hook trace calls.
+
+### Added
+- **Parzival V2.1 — shim architecture**: Dispatch skills, GC-19/GC-20 constraints, and POV step-file workflow architecture
+- **7 Parzival skill shims**: `team-builder`, `agent-dispatch`, `bmad-dispatch`, `agent-lifecycle`, `model-dispatch`, `bootstrap`, `constraints` — thin routing shims (≤576 bytes each)
+- **PLAN-019 Phase 6 — POV restructure swap**: `pov.restructured/` promoted to `pov/`, completing BMAD-compliant directory restructure (TD-306)
+- **`knowledge/` directory**: POV reference data migrated from `data/` to `knowledge/` with 10 files including new `pov-index.csv` and status workflow docs
+- **Step-file tri-modal architecture**: All 21 workflows now have `steps-c/` (create), `steps-e/` (edit), `steps-v/` (validate) directories with `checklist.md`, `instructions.md`, `workflow.yaml` per workflow
+
+### Changed
+- **Skill files converted to thin routing shims**: All Parzival skill files refactored to ≤576 bytes each for maintainability
+- **Session start hook simplified**: Removed ambient injection per injection architecture v2.2 (sessions start clean)
+- **pyproject.toml**: `black 26.3.0` formatting applied
+- `.env.example` reorganized into 5 clear sections with all features enabled by default
+- All PLAN/SPEC/BUG references removed from `.env.example` comments
+- **36 audit findings resolved** (PM #211/212): 4 CRITICAL, 7 HIGH, 14 MEDIUM+LOW findings across skills, workflows, constraints, and knowledge docs
+- **Constraint count**: 17 → 20 global constraints (GC-16 mandatory bug tracking, GC-17 complex bug unified spec, GC-18 oversight document sharding)
+
+### Upgrade Instructions
+
+#### Step 1: Pull latest and run Option 1 installer
+
+```bash
+cd /path/to/your/ai-memory-clone
+git pull origin main
+./scripts/install.sh /path/to/your-project
+# Select Option 1 (Add project to existing installation)
+```
+
+This syncs all code, scripts, monitoring, Docker files, skills, evaluators, and Parzival V2 package to your installation. Your `docker/.env` credentials are preserved automatically.
+
+#### Step 2: Rebuild containers with baked-in code
+
+Four containers have code copied into their Docker images at build time and must be rebuilt after any code update:
+
+```bash
+cd ~/.ai-memory/docker
+unset QDRANT_API_KEY  # Prevent shell env overriding .env file
+
+# Rebuild baked-code containers (main compose)
+docker compose build --no-cache github-sync classifier-worker monitoring-api
+
+# Rebuild baked-code containers (Langfuse compose)
+docker compose -f docker-compose.yml -f docker-compose.langfuse.yml \
+  build --no-cache trace-flush-worker
+```
+
+#### Step 3: Recreate rebuilt containers and restart volume-mounted containers
+
+```bash
+# Recreate containers with new images
+docker compose -f docker-compose.yml -f docker-compose.langfuse.yml up -d \
+  github-sync classifier-worker monitoring-api trace-flush-worker
+
+# Restart volume-mounted containers to reload Python modules
+docker compose -f docker-compose.yml -f docker-compose.langfuse.yml restart \
+  streamlit evaluator-scheduler
+```
+
+#### Step 4: Verify all containers are healthy
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.langfuse.yml ps
+# All containers should show "(healthy)"
+```
+
+#### Step 5: Update environment variables
+
+Rename log level env vars in `~/.ai-memory/docker/.env` (old names still work with a deprecation warning):
+- `BMAD_LOG_LEVEL` → `AI_MEMORY_LOG_LEVEL`
+- `BMAD_LOG_FORMAT` → `AI_MEMORY_LOG_FORMAT`
+
+#### Step 6: Langfuse (optional)
+
+If you use Langfuse observability, install the extras group:
+```bash
+pip install ai-memory[observability]
+```
+
+#### Container reference
+
+| Container | Code Delivery | After Update |
+|-----------|--------------|--------------|
+| github-sync | Baked (COPY in Dockerfile) | Rebuild + recreate |
+| classifier-worker | Baked (COPY in Dockerfile) | Rebuild + recreate |
+| monitoring-api | Baked (COPY in Dockerfile) | Rebuild + recreate |
+| trace-flush-worker | Baked (COPY in Dockerfile) | Rebuild + recreate |
+| streamlit | Volume-mounted (`../src:/app/src:ro`) | Restart only |
+| evaluator-scheduler | Volume-mounted (`../src:/app/src:ro`) | Restart only |
+| qdrant, embedding, prometheus, grafana, pushgateway, langfuse-* | Third-party images | No action needed |
+
+#### Important notes
+
+- **Always** run `unset QDRANT_API_KEY` before any `docker compose` operation — shell env vars override the `.env` file (pydantic-settings precedence)
+- **Always** run `docker compose` from `~/.ai-memory/docker/`, never from the source repo (source `.env` has template values, installed `.env` has real credentials)
+- Option 1 now syncs all directories including Docker files, monitoring, evaluators, and docs (BUG-244 fix)
+
+### Fixed
+- **BUG-244**: Installer Option 1 (`update_shared_scripts`) only synced 4 of 13 directories — extracted shared `sync_installed_files()` function used by both fresh install and Option 1. Also added Docker file sync with `.env` backup/restore to Option 1 path. Fixed pre-existing `log_warn` → `log_warning` typos.
+- **BUG-236**: `docker/github-sync/requirements.txt` missing `tiktoken` — container crash loop after rebuild due to `memory.__init__` → `storage` → `chunking` → `truncation` → `tiktoken` import chain
+- **TD-308**: Single `docker/.env` source of truth — restructured .env architecture
+  - New 5-section `.env.example` layout (API Keys, Auto-Generated, Feature Toggles, Configuration, Internal)
+  - `import_user_env()` deprecated (no longer imports from root `.env`)
+  - Fixed `upgrade.sh` reading `.env` from wrong path (`$INSTALL_DIR/.env` → `$INSTALL_DIR/docker/.env`)
+  - Fixed `rollback.sh` restoring `.env` to wrong location (now restores to `docker/`)
+  - Fixed `classifier/config.py` searching `~/.ai-memory/.env` (now `~/.ai-memory/docker/.env`)
+  - Fixed `config.py` pydantic `env_file` to use absolute path via `AI_MEMORY_INSTALL_DIR`
+  - All compose-referenced vars now uncommented in `.env.example` (11 were previously commented or missing)
+- **BUG-218**: RRF score floating-point precision (`0.9500000000000001` exceeds range)
+- **BUG-219**: `store_async.py` missing explicit `source_type="user_session"` on `scanner.scan()` call
+- **BUG-222**: Verified `step-03-create-handoff.md` exists in Parzival close workflow (QA report referenced wrong filename)
+- **BUG-225**: `SKIP_RECLASSIFICATION_TYPES` expanded to protect `agent_response`, `decision`, `agent_handoff`
+- **BUG-227**: Installer Option 1 now updates `docker/.env.example`
+- **BUG-228–235**: Copy-paste tags, hook_type labels, Langfuse port fixes, caplog reliability, log format tests
+- **TD-262**: Log level/format env vars renamed to `AI_MEMORY_*` (`BMAD_*` deprecated with warnings)
+- **TD-189**: Langfuse moved to optional dependencies
+- **TD-275/289**: Semantic tags on all 108 `emit_trace_event` calls in hook scripts
+- **TD-290**: `@observe(as_type="generation")` on classifier LLM calls
+- **TD-291–292**: Freshness naming consistency, quality gate push metrics
+- **injection.py case-sensitivity**: Fixed `CONSTRAINTS.md` → `constraints.md` path references (lines 882, 901) for Linux filesystem compatibility
+- **Installer stale cleanup**: Added `pov/data/` directory removal for users upgrading from pre-v2.2.4 installations
+- **BUG-237**: 9 test-ordering isolation flakes documented (pre-existing BUG-209/BUG-234 pattern — tests pass individually)
+- **BUG-238**: Langfuse RAM check crashes on macOS — `/proc/meminfo` replaced with OS-aware check (`sysctl -n hw.memsize` on macOS, `/proc/meminfo` on Linux) (GitHub #71)
+- **BUG-239**: `set -e` + `result=$(...)` silent installer abort — full audit of `install.sh`, all non-subshell-safe command substitutions corrected (GitHub #71)
+- **BUG-240**: `JIRA_PROJECTS` non-interactive `JSONDecodeError` — comma-separated value now normalized to JSON array in non-interactive install path (GitHub #71)
+- **BUG-241**: Stale `docker/.env` on `add-project` — non-interactive `add-project` now runs `configure_environment` for project-specific vars (GitHub #71)
+- **BUG-242**: `GITHUB_REPO` format not validated — `owner/repo` format check added before GitHub API calls (GitHub #71)
+- **BUG-243**: `register_project_sync`/`projects.d` skipped in non-interactive path — wired into non-interactive flow; `INSTALL.md` updated with non-interactive multi-project instructions (GitHub #71)
+
+### Security
+- **TD-220**: SQL injection fix in `langfuse_setup.sh` (parameterized psql queries)
+
+---
+
 ## [2.2.3] - 2026-03-15
 
 Complete Langfuse observability pipeline: observation-level evaluation for all 6 evaluators, automated scheduling, exponential backoff retry, and security hardening.

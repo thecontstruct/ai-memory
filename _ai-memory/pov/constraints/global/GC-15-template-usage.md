@@ -26,12 +26,13 @@ be referenced across sessions.
 | System audit | `{oversight_path}/audits/AUDIT_TEMPLATE.md` |
 | Validation report | `{oversight_path}/validation/VALIDATION_TEMPLATE.md` |
 | Verification report | `{oversight_path}/verification/checklists/` (story/code/production) |
+| Fix verification | `{project-root}/_ai-memory/pov/templates/verification-fix.template.md` |
 
 ## Applies To
 
-- Any agent instruction that produces an oversight document
 - Parzival's own session handoffs (use `{project-root}/_ai-memory/pov/templates/session-handoff.template.md`)
 - Decision logging (use entry format from `{project-root}/templates/oversight/tracking/decision-log.md`)
+- Any structured document that will be referenced across sessions
 
 ## What This Does NOT Apply To
 
@@ -52,5 +53,5 @@ oversight documents diverge in structure and become harder for Future Parzival t
 ## Violation Response
 
 1. Identify the correct template from the table above
-2. Instruct the producing agent to use that template
+2. Use that template for the document
 3. Review the output against the template structure before accepting

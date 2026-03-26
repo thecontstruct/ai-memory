@@ -1,7 +1,7 @@
 ---
 name: session-blocker
 description: 'Analyze a blocker, propose resolution options, and log it to the blockers tracking file.'
-firstStep: './steps/step-01-capture-blocker.md'
+firstStep: './steps-c/step-01-capture-blocker.md'
 ---
 
 # Blocker Analysis
@@ -32,6 +32,7 @@ This uses **step-file architecture** for disciplined execution:
 - Never skip logging because "the blocker will be resolved soon"
 - Never mark a blocker as resolved without user confirmation
 - Never log vague blocker descriptions (must be specific and actionable)
+- Never skip the prior-issues check (Step 1.4) — GC-14 requires checking oversight/bugs/ and oversight/tracking/blockers-log.md BEFORE analysis, even when the blocker seems novel
 
 ---
 

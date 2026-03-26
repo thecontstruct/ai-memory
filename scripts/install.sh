@@ -99,6 +99,7 @@ EMBEDDING_PORT="${AI_MEMORY_EMBEDDING_PORT:-28080}"
 MONITORING_PORT="${AI_MEMORY_MONITORING_PORT:-28000}"
 STREAMLIT_PORT="${AI_MEMORY_STREAMLIT_PORT:-28501}"
 CONTAINER_PREFIX="${AI_MEMORY_CONTAINER_PREFIX:-ai-memory}"
+INSTALLER_VERSION="2.2.4"
 
 # Logging functions
 log_info() {
@@ -133,6 +134,26 @@ step() {
     CURRENT_STEP=$((CURRENT_STEP + 1))
     echo ""
     echo -e "${BLUE}━━━ [Step ${CURRENT_STEP}/${TOTAL_STEPS}] $1 ━━━${NC}"
+}
+
+# Cross-platform total RAM detection (BUG-238)
+# Self-contained: calls `uname -s` directly, no dependency on detect_platform.
+# Returns integer GiB. Falls back to 0 on unknown OS (conservative — triggers warning).
+get_total_ram_gb() {
+    local os
+    os="$(uname -s)"
+    case "$os" in
+        Linux)
+            awk '/MemTotal/ { printf "%d", $2/1024/1024 }' /proc/meminfo
+            ;;
+        Darwin)
+            sysctl -n hw.memsize | awk '{ printf "%d", $1/1024/1024/1024 }'
+            ;;
+        *)
+            log_warning "Unknown OS '$os' — cannot detect RAM, returning 0"
+            echo "0"
+            ;;
+    esac
 }
 
 # Convert comma-separated Jira project keys to JSON array for .env file
@@ -216,6 +237,24 @@ JIRA_INSTANCE_URL="${JIRA_INSTANCE_URL:-}"
 JIRA_EMAIL="${JIRA_EMAIL:-}"
 JIRA_API_TOKEN="${JIRA_API_TOKEN:-}"
 JIRA_PROJECTS="${JIRA_PROJECTS:-}"
+# BUG-240: Normalize JIRA_PROJECTS to JSON array for pydantic-settings
+# Interactive mode normalizes via configure_environment; non-interactive needs this
+if [[ -n "$JIRA_PROJECTS" && "$JIRA_PROJECTS" != "["* ]]; then
+    if command -v python3 &>/dev/null; then
+        # Comma-separated → JSON array: "A,B" → '["A","B"]'
+        _orig_jira_projects="$JIRA_PROJECTS"
+        JIRA_PROJECTS=$(echo "$JIRA_PROJECTS" | python3 -c "
+import sys, json
+raw = sys.stdin.read().strip()
+items = [item.strip() for item in raw.split(',') if item.strip()]
+print(json.dumps(items))
+" 2>/dev/null) || {
+            JIRA_PROJECTS="$_orig_jira_projects"
+            log_warning "Failed to normalize JIRA_PROJECTS to JSON, leaving as-is"
+        }
+        unset _orig_jira_projects
+    fi
+fi
 JIRA_INITIAL_SYNC="${JIRA_INITIAL_SYNC:-}"
 
 # GitHub sync configuration (PLAN-006 Phase 1a)
@@ -509,6 +548,9 @@ print(','.join(keys))
                 GITHUB_REPO="${github_owner}/${github_name}"
             fi
 
+            # BUG-242: Validate GITHUB_REPO format before calling API
+            validate_github_repo "$GITHUB_REPO" || GITHUB_SYNC_ENABLED="false"
+
             # Validate PAT via GitHub API
             echo ""
             log_info "Testing GitHub connection..."
@@ -522,9 +564,6 @@ print(','.join(keys))
 
             if [[ "$http_code" == "200" ]]; then
                 log_success "GitHub connection verified (HTTP 200) — repo: $GITHUB_REPO"
-
-                # Register project in projects.d/ for multi-project support (PLAN-009)
-                register_project_sync "$GITHUB_REPO" "$GITHUB_REPO" "$(pwd)" "${GITHUB_BRANCH:-main}"
 
                 # Prompt for initial sync
                 echo ""
@@ -565,7 +604,8 @@ print(','.join(keys))
 
     # RAM check when Langfuse is selected
     if [[ "$LANGFUSE_ENABLED" == "true" ]]; then
-        TOTAL_RAM_GIB=$(awk '/MemTotal/ { printf "%d", $2/1024/1024 }' /proc/meminfo)
+        TOTAL_RAM_GIB=$(get_total_ram_gb) || TOTAL_RAM_GIB=0
+        [[ -z "$TOTAL_RAM_GIB" ]] && TOTAL_RAM_GIB=0
         if [[ "$TOTAL_RAM_GIB" -lt 32 ]]; then
             echo ""
             log_warning "Langfuse recommends 32 GiB RAM. Detected: ${TOTAL_RAM_GIB} GiB total."
@@ -767,6 +807,8 @@ main() {
             seed_best_practices
             run_initial_jira_sync
             setup_jira_cron
+            # BUG-242: Validate GITHUB_REPO format (non-interactive path)
+            validate_github_repo "$GITHUB_REPO" || { log_warning "Disabling GitHub sync due to invalid GITHUB_REPO"; GITHUB_SYNC_ENABLED="false"; }
             setup_github_indexes
             run_initial_github_sync
             setup_langfuse
@@ -776,6 +818,18 @@ main() {
         fi
     else
         log_info "Skipping shared infrastructure setup (add-project mode)"
+        # BUG-241: Detect stale .env from prior project
+        # SOURCE_DIR not set in add-project mode (copy_files skipped), derive from SCRIPT_DIR
+        SOURCE_DIR="${SOURCE_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+        if [[ -f "$INSTALL_DIR/docker/.env" ]]; then
+            local installed_for
+            installed_for=$(grep '^# AIM_INSTALLED_FOR=' "$INSTALL_DIR/docker/.env" | cut -d= -f2- || true)
+            if [[ -n "$installed_for" && "$installed_for" != "$SOURCE_DIR" ]]; then
+                log_warning "Existing .env was configured for '$installed_for'"
+                log_warning "You are now installing for '$SOURCE_DIR'"
+                log_warning "Review GITHUB_REPO, AI_MEMORY_PROJECT_ID in ~/.ai-memory/docker/.env"
+            fi
+        fi
         # BUG-028: Update shared scripts to ensure compatibility with this installer version
         update_shared_scripts
         # Verify services are running in add-project mode
@@ -791,6 +845,11 @@ main() {
 
     # Parzival session agent (optional, SPEC-015)
     setup_parzival
+
+    # BUG-243: Register project for GitHub sync — parity between interactive and non-interactive
+    if [[ "$GITHUB_SYNC_ENABLED" == "true" && -n "$GITHUB_REPO" ]]; then
+        register_project_sync "$PROJECT_NAME" "$GITHUB_REPO" "$PROJECT_PATH" "${GITHUB_BRANCH:-main}"
+    fi
 
     # Record project in manifest for cross-filesystem recovery discovery
     record_installed_project
@@ -889,34 +948,133 @@ handle_reinstall() {
     log_info "Proceeding with reinstallation..."
 }
 
+# BUG-244: Shared file sync function for both fresh install (copy_files) and
+# Option 1 add-project (update_shared_scripts). Previously these two paths diverged:
+# copy_files() synced 13+ directories but update_shared_scripts() only synced 4,
+# causing Option 1 upgrades to miss monitoring/, templates/, evaluators/, .claude/skills/,
+# CHANGELOG.md, docs/, and others — leading to crashes from stale requirements.txt.
+sync_installed_files() {
+    local src_dir="$1"
+    local dst_dir="$2"
+
+    log_debug "Syncing installed files from $src_dir to $dst_dir..."
+
+    # src/memory/ — core Python modules (critical)
+    log_debug "Copying Python memory modules..."
+    mkdir -p "$dst_dir/src/memory"
+    cp -r "$src_dir/src/memory/"* "$dst_dir/src/memory/" || { log_error "Failed to copy Python memory modules"; exit 1; }
+
+    # scripts/ — installer, utilities, hooks (critical)
+    log_debug "Copying scripts..."
+    mkdir -p "$dst_dir/scripts"
+    mkdir -p "$dst_dir/scripts/memory"
+    cp -r "$src_dir/scripts/"* "$dst_dir/scripts/" || { log_error "Failed to copy scripts"; exit 1; }
+    # Remove __pycache__ directories from target (clean install)
+    find "$dst_dir/scripts" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+    # monitoring/ — monitoring module (optional)
+    if [[ -d "$src_dir/monitoring" ]]; then
+        log_debug "Copying monitoring module..."
+        mkdir -p "$dst_dir/monitoring"
+        cp -r "$src_dir/monitoring/"* "$dst_dir/monitoring/"
+    fi
+
+    # .claude/hooks/ — Claude Code hooks (critical)
+    log_debug "Copying Claude Code hooks..."
+    mkdir -p "$dst_dir/.claude/hooks/scripts"
+    cp -r "$src_dir/.claude/hooks/"* "$dst_dir/.claude/hooks/" || { log_error "Failed to copy Claude Code hooks"; exit 1; }
+
+    # .claude/skills/ — Claude Code skills (optional)
+    if [[ -d "$src_dir/.claude/skills" ]]; then
+        log_debug "Copying Claude Code skills..."
+        cp -r "$src_dir/.claude/skills/"* "$dst_dir/.claude/skills/" 2>/dev/null || true
+    fi
+
+    # .claude/agents/ — Claude Code agents (optional)
+    if [[ -d "$src_dir/.claude/agents" ]]; then
+        log_debug "Copying Claude Code agents..."
+        cp -r "$src_dir/.claude/agents/"* "$dst_dir/.claude/agents/" 2>/dev/null || true
+    fi
+
+    # .claude/commands/ — Claude Code commands (optional, BUG-107)
+    if [[ -d "$src_dir/.claude/commands" ]]; then
+        log_debug "Copying Claude Code commands..."
+        mkdir -p "$dst_dir/.claude/commands"
+        cp -r "$src_dir/.claude/commands/"* "$dst_dir/.claude/commands/" 2>/dev/null || true
+    fi
+
+    # _ai-memory/ — deployable package (full replace: removes stale files not in source)
+    # INSTALL_DIR/_ai-memory/ is an installer-owned package cache — no user data lives here
+    if [[ -d "$src_dir/_ai-memory" ]]; then
+        log_debug "Copying _ai-memory/ deployable package..."
+        rm -rf "$dst_dir/_ai-memory"
+        mkdir -p "$dst_dir/_ai-memory"
+        if compgen -G "$src_dir/_ai-memory/*" > /dev/null 2>&1; then
+            cp -r "$src_dir/_ai-memory/"* "$dst_dir/_ai-memory/"
+            find "$dst_dir/_ai-memory" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+            log_debug "Synced _ai-memory/ package"
+        fi
+    fi
+
+    # templates/ — best practices seeding templates (optional)
+    if [[ -d "$src_dir/templates" ]]; then
+        log_debug "Copying templates..."
+        mkdir -p "$dst_dir/templates"
+        cp -r "$src_dir/templates/"* "$dst_dir/templates/"
+    fi
+
+    # evaluator_config.yaml + evaluators/ — evaluator definitions (optional, S-16.5, DEC-110)
+    # Required by evaluator-scheduler container at runtime
+    log_debug "Copying evaluator configuration..."
+    if [[ -f "$src_dir/evaluator_config.yaml" ]]; then
+        cp "$src_dir/evaluator_config.yaml" "$dst_dir/evaluator_config.yaml" || log_warning "Failed to copy evaluator_config.yaml"
+    fi
+    if [[ -d "$src_dir/evaluators" ]]; then
+        mkdir -p "$dst_dir/evaluators"
+        cp -r "$src_dir/evaluators/"* "$dst_dir/evaluators/" 2>/dev/null || log_warning "Failed to copy evaluators directory"
+    fi
+
+    # CHANGELOG.md — release notes reference (optional, TD-170)
+    if [[ -f "$src_dir/CHANGELOG.md" ]]; then
+        cp "$src_dir/CHANGELOG.md" "$dst_dir/" || log_warning "Failed to copy CHANGELOG.md"
+    fi
+
+    # docs/ — documentation (optional)
+    if [[ -d "$src_dir/docs" ]]; then
+        log_debug "Copying documentation..."
+        mkdir -p "$dst_dir/docs"
+        cp -r "$src_dir/docs/"* "$dst_dir/docs/"
+    fi
+
+    # Make scripts executable (both .py and .sh files)
+    log_debug "Making scripts executable..."
+    chmod +x "$dst_dir/scripts/"*.{py,sh} 2>/dev/null || true
+    chmod +x "$dst_dir/.claude/hooks/scripts/"*.py 2>/dev/null || true
+    # F14/TD-240: chmod subdirectories missed by top-level glob
+    find "$dst_dir/scripts/memory" -name "*.py" -exec chmod +x {} + 2>/dev/null || true
+    find "$dst_dir/scripts/monitoring" -name "*.py" -exec chmod +x {} + 2>/dev/null || true
+
+    log_debug "File sync complete"
+}
+
 # Update shared scripts for add-project mode compatibility (BUG-028, BUG-034)
 # When adding a project to an existing installation, ensure the shared
 # scripts AND hook scripts are compatible with the installer version being used.
 update_shared_scripts() {
     log_info "Updating shared scripts for compatibility..."
 
-    # Ensure directories exist
+    # Ensure critical directories exist before sync
+    mkdir -p "$INSTALL_DIR/src/memory"
     mkdir -p "$INSTALL_DIR/scripts"
+    mkdir -p "$INSTALL_DIR/scripts/memory"
     mkdir -p "$INSTALL_DIR/.claude/hooks/scripts"
 
-    # BUG-205: Fixed non-recursive copy that missed scripts/memory/ subdirectory (33 files)
-    # and all .sh files. Old code used "for script in $SCRIPT_DIR/*.py" — top-level .py only.
-    # New code: recursive copy matching copy_files() pattern (line 1436).
-    local updated_count=0
-    mkdir -p "$INSTALL_DIR/scripts/memory"
-    cp -r "$SCRIPT_DIR/"* "$INSTALL_DIR/scripts/" || { log_error "Failed to copy shared scripts"; return 1; }
-    # Remove __pycache__ directories from target (clean install)
-    find "$INSTALL_DIR/scripts" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-    chmod +x "$INSTALL_DIR/scripts/"*.{py,sh} 2>/dev/null || true
-    # F14/TD-240: chmod subdirectories missed by top-level glob
-    find "$INSTALL_DIR/scripts/memory" -name "*.py" -exec chmod +x {} + 2>/dev/null || true
-    find "$INSTALL_DIR/scripts/monitoring" -name "*.py" -exec chmod +x {} + 2>/dev/null || true
-    updated_count=$(find "$SCRIPT_DIR" -type f -not -path "*/__pycache__/*" | wc -l)
+    # BUG-244: Use shared sync function for all non-Docker file syncing
+    # SOURCE_DIR is set at line 823 in add-project mode before this function is called
+    sync_installed_files "$SOURCE_DIR" "$INSTALL_DIR"
 
-    # BUG-034: Also update hook scripts in shared installation
-    # This ensures projects get the latest hooks when added
-    local hooks_source="$SCRIPT_DIR/../.claude/hooks/scripts"
-    local hooks_count=0
+    # BUG-034: Archive stale hooks not in source (unique to Option 1 add-project)
+    local hooks_source="$SOURCE_DIR/.claude/hooks/scripts"
     local archived_count=0
     if [[ -d "$hooks_source" ]]; then
         # Build list of source hook names for stale detection
@@ -924,8 +1082,6 @@ update_shared_scripts() {
         for hook in "$hooks_source"/*.py; do
             if [[ -f "$hook" ]]; then
                 source_hooks+=("$(basename "$hook")")
-                cp "$hook" "$INSTALL_DIR/.claude/hooks/scripts/"
-                hooks_count=$((hooks_count + 1))
             fi
         done
 
@@ -949,47 +1105,14 @@ update_shared_scripts() {
                 fi
             fi
         done
-
-        # Also sync src/memory modules
-        if [[ -d "$SCRIPT_DIR/../src/memory" ]]; then
-            cp -r "$SCRIPT_DIR/../src/memory" "$INSTALL_DIR/src/" 2>/dev/null || true
-        fi
     fi
-
-    # Sync _ai-memory/ deployable package (PLAN-011a Phase 4)
-    # Full replace — removes stale files not in source (mirrors deploy_parzival_v2 pattern)
-    # INSTALL_DIR/_ai-memory/ is an installer-owned package cache — no user data lives here
-    local aim_source="$SCRIPT_DIR/../_ai-memory"
-    if [[ -d "$aim_source" ]]; then
-        rm -rf "$INSTALL_DIR/_ai-memory"
-        mkdir -p "$INSTALL_DIR/_ai-memory"
-        if compgen -G "$aim_source/*" > /dev/null 2>&1; then
-            cp -r "$aim_source/"* "$INSTALL_DIR/_ai-memory/"
-            find "$INSTALL_DIR/_ai-memory" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-            log_debug "Synced _ai-memory/ package to INSTALL_DIR"
-        fi
+    if [[ $archived_count -gt 0 ]]; then
+        log_info "Archived $archived_count stale hook scripts to .archived/"
     fi
-
-    # Sync .claude/{skills,agents,commands} shims to INSTALL_DIR (PLAN-011a Phase 4)
-    # Full replace per subdirectory — removes stale files not in source
-    # INSTALL_DIR/.claude/ is installer-owned; user custom skills/agents/commands live in
-    # PROJECT_PATH/.claude/ and are protected by prefix/subdirectory scoping in deploy_* functions
-    for subdir in skills agents commands; do
-        local sub_src="$SCRIPT_DIR/../.claude/$subdir"
-        if [[ -d "$sub_src" ]]; then
-            rm -rf "$INSTALL_DIR/.claude/$subdir"
-            mkdir -p "$INSTALL_DIR/.claude/$subdir"
-            if compgen -G "$sub_src/*" > /dev/null 2>&1; then
-                cp -r "$sub_src/"* "$INSTALL_DIR/.claude/$subdir/" 2>/dev/null || true
-            fi
-        fi
-    done
-    log_debug "Synced .claude/ shims to INSTALL_DIR"
 
     # Sync Docker files (Dockerfiles, main.py, requirements.txt, docker-compose.yml, etc.)
     # In add-project mode, copy_files() is skipped — Docker changes must be synced here
-    local docker_source="$SCRIPT_DIR/../docker"
-    local docker_count=0
+    local docker_source="$SOURCE_DIR/docker"
     if [[ -d "$docker_source" ]]; then
         mkdir -p "$INSTALL_DIR/docker"
 
@@ -1003,6 +1126,14 @@ update_shared_scripts() {
 
         log_info "Syncing Docker files to installation..."
         cp -r "$docker_source/"* "$INSTALL_DIR/docker/" || { log_error "Failed to copy docker files"; return 1; }
+        # BUG-227: Update .env.example on Option 1 (add-project) installs
+        if [[ -f "$docker_source/.env.example" ]]; then
+            cp "$docker_source/.env.example" "$INSTALL_DIR/docker/.env.example" \
+                || log_warning "Failed to copy docker/.env.example (non-fatal)"
+            log_debug "Updated docker/.env.example"
+        else
+            log_warning "docker/.env.example not found in source — skipping"
+        fi
         find "$INSTALL_DIR/docker" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
         # Restore docker/.env if it was backed up (bulk cp may have overwritten with template)
@@ -1033,51 +1164,25 @@ update_shared_scripts() {
             fi
         fi
 
-        docker_count=$(find "$docker_source" -type f -not -path "*/__pycache__/*" | wc -l)
-        log_debug "Synced $docker_count Docker files to INSTALL_DIR"
-    fi
-
-    # Sync evaluator config and definitions (S-16.5, DEC-110)
-    # Required by evaluator-scheduler container at runtime
-    if [[ -f "$SCRIPT_DIR/../evaluator_config.yaml" ]]; then
-        cp "$SCRIPT_DIR/../evaluator_config.yaml" "$INSTALL_DIR/evaluator_config.yaml" || log_warning "Failed to copy evaluator_config.yaml"
-        log_debug "Updated evaluator_config.yaml"
-    fi
-    if [[ -d "$SCRIPT_DIR/../evaluators" ]]; then
-        mkdir -p "$INSTALL_DIR/evaluators"
-        cp -r "$SCRIPT_DIR/../evaluators/"* "$INSTALL_DIR/evaluators/" 2>/dev/null || true
-        log_debug "Updated evaluators/ directory"
+        log_debug "Synced Docker files to INSTALL_DIR"
     fi
 
     # Sync requirements.txt and pyproject.toml (needed by Docker builds)
     # Always overwrite — new dependencies (e.g. croniter) must reach containers
-    if [[ -f "$SCRIPT_DIR/../requirements.txt" ]]; then
-        cp "$SCRIPT_DIR/../requirements.txt" "$INSTALL_DIR/requirements.txt" || log_warning "Failed to copy requirements.txt"
+    if [[ -f "$SOURCE_DIR/requirements.txt" ]]; then
+        cp "$SOURCE_DIR/requirements.txt" "$INSTALL_DIR/requirements.txt" || log_warning "Failed to copy requirements.txt"
         log_debug "Updated requirements.txt"
     fi
-    if [[ -f "$SCRIPT_DIR/../pyproject.toml" ]]; then
-        cp "$SCRIPT_DIR/../pyproject.toml" "$INSTALL_DIR/pyproject.toml" || log_warning "Failed to copy pyproject.toml"
+    if [[ -f "$SOURCE_DIR/pyproject.toml" ]]; then
+        cp "$SOURCE_DIR/pyproject.toml" "$INSTALL_DIR/pyproject.toml" || log_warning "Failed to copy pyproject.toml"
         log_debug "Updated pyproject.toml"
     fi
 
-    # Update templates (new templates added in updates must reach installed dir)
-    if [[ -d "$SCRIPT_DIR/../templates" ]]; then
-        mkdir -p "$INSTALL_DIR/templates"
-        cp -r "$SCRIPT_DIR/../templates/"* "$INSTALL_DIR/templates/" 2>/dev/null || true
-        log_debug "Templates updated"
-    fi
-
-    # Re-import user .env customizations (new env vars from updates, e.g. OLLAMA_API_KEY)
+    # DEPRECATED: import_user_env() is now a no-op (warns if legacy root .env exists)
+    # New env vars must be added manually to $INSTALL_DIR/docker/.env
     import_user_env
 
-    if [[ $updated_count -gt 0 || $hooks_count -gt 0 || $docker_count -gt 0 ]]; then
-        log_success "Updated $updated_count shared scripts, $hooks_count hook scripts, $docker_count docker files"
-        if [[ $archived_count -gt 0 ]]; then
-            log_info "Archived $archived_count stale hook scripts to .archived/"
-        fi
-    else
-        log_warning "No scripts found to update"
-    fi
+    log_success "Updated shared scripts and files"
 }
 
 # Prerequisite checking (AC 7.1.3)
@@ -1426,6 +1531,10 @@ install_python_dependencies() {
         "httpx:HTTP client for embedding service"
         "pydantic:Configuration validation"
         "structlog:Logging"
+        "tiktoken:Token counting for chunking"
+        "anthropic:Claude API client"
+        "langfuse:Observability tracing"
+        "numpy:Embedding operations"
     )
 
     FAILED_PACKAGES=()
@@ -1458,6 +1567,11 @@ install_python_dependencies() {
     OPTIONAL_PACKAGES=(
         "tree_sitter:AST-based code chunking"
         "tree_sitter_python:Python code parsing"
+        "tree_sitter_javascript:JavaScript code parsing"
+        "tree_sitter_typescript:TypeScript code parsing"
+        "tree_sitter_go:Go code parsing"
+        "tree_sitter_rust:Rust code parsing"
+        "spacy:NER-based PII detection (Layer 3)"
     )
 
     for pkg_info in "${OPTIONAL_PACKAGES[@]}"; do
@@ -1549,177 +1663,58 @@ copy_files() {
         fi
     fi
 
-    log_debug "Copying Python memory modules..."
-    cp -r "$SOURCE_DIR/src/memory/"* "$INSTALL_DIR/src/memory/" || { log_error "Failed to copy Python memory modules"; exit 1; }
-
-    log_debug "Copying scripts..."
-    cp -r "$SOURCE_DIR/scripts/"* "$INSTALL_DIR/scripts/" || { log_error "Failed to copy scripts"; exit 1; }
-
-    log_debug "Copying monitoring module..."
-    if [[ -d "$SOURCE_DIR/monitoring" ]]; then
-        mkdir -p "$INSTALL_DIR/monitoring"
-        cp -r "$SOURCE_DIR/monitoring/"* "$INSTALL_DIR/monitoring/"
-    fi
-
-    log_debug "Copying Claude Code hooks..."
-    cp -r "$SOURCE_DIR/.claude/hooks/"* "$INSTALL_DIR/.claude/hooks/" || { log_error "Failed to copy Claude Code hooks"; exit 1; }
-
-    # Copy Claude Code skills (core ai-memory functionality)
-    if [[ -d "$SOURCE_DIR/.claude/skills" ]]; then
-        log_debug "Copying Claude Code skills..."
-        cp -r "$SOURCE_DIR/.claude/skills/"* "$INSTALL_DIR/.claude/skills/" 2>/dev/null || true
-    fi
-
-    # Copy Claude Code agents (core ai-memory functionality)
-    if [[ -d "$SOURCE_DIR/.claude/agents" ]]; then
-        log_debug "Copying Claude Code agents..."
-        cp -r "$SOURCE_DIR/.claude/agents/"* "$INSTALL_DIR/.claude/agents/" 2>/dev/null || true
-    fi
-
-    # BUG-107: Copy Claude Code commands (Parzival session commands)
-    if [[ -d "$SOURCE_DIR/.claude/commands" ]]; then
-        log_debug "Copying Claude Code commands..."
-        mkdir -p "$INSTALL_DIR/.claude/commands"
-        cp -r "$SOURCE_DIR/.claude/commands/"* "$INSTALL_DIR/.claude/commands/" 2>/dev/null || true
-    fi
-
-    # Copy _ai-memory/ deployable package (Parzival V2 + skills + agents)
-    if [[ -d "$SOURCE_DIR/_ai-memory" ]]; then
-        log_debug "Copying _ai-memory/ deployable package..."
-        mkdir -p "$INSTALL_DIR/_ai-memory"
-        if compgen -G "$SOURCE_DIR/_ai-memory/*" > /dev/null 2>&1; then
-            cp -r "$SOURCE_DIR/_ai-memory/"* "$INSTALL_DIR/_ai-memory/"
-            find "$INSTALL_DIR/_ai-memory" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-            local aim_count
-            aim_count=$(find "$INSTALL_DIR/_ai-memory" -type f | wc -l)
-            log_debug "Copied $aim_count files to $INSTALL_DIR/_ai-memory/"
-        fi
-    fi
-
-    # Copy templates for best practices seeding
-    if [[ -d "$SOURCE_DIR/templates" ]]; then
-        log_debug "Copying templates..."
-        mkdir -p "$INSTALL_DIR/templates"
-        cp -r "$SOURCE_DIR/templates/"* "$INSTALL_DIR/templates/"
-    fi
-
-    # Copy evaluator config and definitions (S-16.5, DEC-110)
-    # Required by evaluator-scheduler container at runtime (../evaluator_config.yaml, ../evaluators/)
-    log_debug "Copying evaluator configuration..."
-    if [[ -f "$SOURCE_DIR/evaluator_config.yaml" ]]; then
-        cp "$SOURCE_DIR/evaluator_config.yaml" "$INSTALL_DIR/evaluator_config.yaml" || log_warning "Failed to copy evaluator_config.yaml"
-    fi
-    if [[ -d "$SOURCE_DIR/evaluators" ]]; then
-        mkdir -p "$INSTALL_DIR/evaluators"
-        cp -r "$SOURCE_DIR/evaluators/"* "$INSTALL_DIR/evaluators/" 2>/dev/null || log_warning "Failed to copy evaluators directory"
-    fi
-
-    # Copy CHANGELOG for reference (TD-170)
-    if [[ -f "$SOURCE_DIR/CHANGELOG.md" ]]; then
-        cp "$SOURCE_DIR/CHANGELOG.md" "$INSTALL_DIR/" || log_warning "Failed to copy CHANGELOG.md"
-    fi
-
-    # Copy documentation
-    if [[ -d "$SOURCE_DIR/docs" ]]; then
-        log_debug "Copying documentation..."
-        mkdir -p "$INSTALL_DIR/docs"
-        cp -r "$SOURCE_DIR/docs/"* "$INSTALL_DIR/docs/"
-    fi
-
-    # Make scripts executable (both .py and .sh files)
-    log_debug "Making scripts executable..."
-    chmod +x "$INSTALL_DIR/scripts/"*.{py,sh} 2>/dev/null || true
-    chmod +x "$INSTALL_DIR/.claude/hooks/scripts/"*.py 2>/dev/null || true
-    # F14/TD-240: chmod subdirectories missed by top-level glob
-    find "$INSTALL_DIR/scripts/memory" -name "*.py" -exec chmod +x {} + 2>/dev/null || true
-    find "$INSTALL_DIR/scripts/monitoring" -name "*.py" -exec chmod +x {} + 2>/dev/null || true
+    # BUG-244: Use shared sync function for all non-Docker file syncing
+    sync_installed_files "$SOURCE_DIR" "$INSTALL_DIR"
 
     log_success "Files copied to $INSTALL_DIR"
 }
 
-# BUG-186: Import user customizations from $SOURCE_DIR/.env into $INSTALL_DIR/docker/.env
-# Called after copy_files and before configure_environment so imported credentials
-# are present when credential generation checks run.
+# DEPRECATED: import_user_env() no longer imports from root .env.
+# docker/.env is the single source of truth for all configuration.
+# This function is kept as a stub to preserve call sites at line 746 and 1078.
 import_user_env() {
-    local docker_env="$INSTALL_DIR/docker/.env"
-    # SOURCE_DIR is set during full install; fall back to SCRIPT_DIR parent for Option 1
     local source_root="${SOURCE_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
     local user_env="$source_root/.env"
 
-    # Only import if user's .env exists and docker/.env exists
-    if [[ ! -f "$user_env" ]] || [[ ! -f "$docker_env" ]]; then
-        return 0
+    if [[ -f "$user_env" ]]; then
+        log_warning "Found legacy root .env at $user_env"
+        log_warning "The root .env is no longer used. All configuration lives in docker/.env"
+        log_warning "If you have API keys in $user_env, add them to $INSTALL_DIR/docker/.env Section 1"
     fi
+    return 0
+}
 
-    log_info "Found user .env at $user_env — importing customizations..."
-
-    local imported=0
-    while IFS= read -r line; do
-        # Skip comments and empty lines
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// }" ]] && continue
-
-        # Extract key and value
-        local key="${line%%=*}"
-
-        # Skip lines without = separator
-        [[ "$key" == "$line" ]] && continue
-
-        local value="${line#*=}"
-
-        # Determine raw value (without quotes) for validation checks
-        local raw_value="$value"
-        if [[ "$raw_value" =~ ^\"(.*)\"$ ]]; then
-            raw_value="${BASH_REMATCH[1]}"
-        elif [[ "$raw_value" =~ ^\'(.*)\'$ ]]; then
-            raw_value="${BASH_REMATCH[1]}"
-        fi
-
-        # Skip keys with invalid characters (safety against regex injection)
-        [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-
-        # Skip empty values
-        [[ -z "$raw_value" ]] && continue
-
-        # Skip installer-managed keys (paths, ports, container prefix)
-        case "$key" in
-            AI_MEMORY_INSTALL_DIR|AI_MEMORY_CONTAINER_PREFIX|AI_MEMORY_PROJECT_ID)
-                continue ;;
-            *_PORT|*_HOST)
-                continue ;;
-        esac
-
-        # Skip known placeholder values (case-insensitive)
-        local lower_value
-        lower_value=$(echo "$raw_value" | tr '[:upper:]' '[:lower:]')
-        case "$lower_value" in
-            changeme|your-key-here|your-*|change_me|todo|placeholder)
-                continue ;;
-        esac
-
-        # Import: remove old key line (if any) and append new value
-        # Uses grep -v + echo to avoid sed metacharacter issues (|, &, \)
-        local tmp_env
-        tmp_env=$(grep -v "^${key}=" "$docker_env" 2>/dev/null) || true
-        if [[ -n "$tmp_env" ]]; then
-            printf '%s\n' "$tmp_env" > "$docker_env"
-        else
-            : > "$docker_env"
-        fi
-        # Write value: preserve existing quotes, add double quotes if unquoted
-        if [[ "$value" =~ ^\".*\"$ ]] || [[ "$value" =~ ^\'.*\'$ ]]; then
-            echo "${key}=${value}" >> "$docker_env"
-        else
-            echo "${key}=\"${value}\"" >> "$docker_env"
-        fi
-        imported=$((imported + 1))
-    done < "$user_env"
-
-    if [[ $imported -gt 0 ]]; then
-        log_success "Imported $imported customization(s) from user .env"
-    else
-        log_debug "No customizations to import from user .env"
+# Validate GitHub owner/repo format (BUG-242)
+validate_github_repo() {
+    local repo="$1"
+    if [[ -z "$repo" ]]; then
+        return 0  # Empty is OK — means GitHub sync disabled
     fi
+    # Must contain exactly one slash
+    if [[ "$repo" != */* ]] || [[ "$repo" == */*/* ]]; then
+        log_error "GITHUB_REPO must be in 'owner/repo' format (got: '$repo')"
+        log_error "Example: GITHUB_REPO='myorg/myrepo'"
+        return 1
+    fi
+    local owner="${repo%%/*}"
+    local name="${repo#*/}"
+    if [[ -z "$owner" || -z "$name" ]]; then
+        log_error "GITHUB_REPO must have both owner and repo name (got: '$repo')"
+        return 1
+    fi
+    if [[ ${#owner} -gt 39 ]]; then
+        log_error "GitHub owner name too long (max 39 chars, got ${#owner})"
+        return 1
+    fi
+    if [[ ! "$owner" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$ ]]; then
+        log_error "GitHub owner contains invalid characters (got: '$owner')"
+        return 1
+    fi
+    if [[ ! "$name" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        log_error "GitHub repo name contains invalid characters (got: '$name')"
+        return 1
+    fi
+    return 0
 }
 
 # Environment configuration (AC 7.1.6)
@@ -1774,6 +1769,13 @@ configure_environment() {
             log_debug "Added Jira configuration to .env"
         fi
 
+        # BUG-239: Preflight — fail fast if GitHub sync enabled without token
+        if [[ "$GITHUB_SYNC_ENABLED" == "true" && -z "$GITHUB_TOKEN" ]]; then
+            log_error "GITHUB_SYNC_ENABLED=true requires GITHUB_TOKEN to be set"
+            log_error "Set GITHUB_TOKEN in your environment or disable GitHub sync"
+            exit 1
+        fi
+
         # Add GitHub config if not present and GitHub is enabled
         if [[ "$GITHUB_SYNC_ENABLED" == "true" ]] && ! grep -q "^GITHUB_SYNC_ENABLED=" "$docker_env"; then
             echo "" >> "$docker_env"
@@ -1812,6 +1814,16 @@ configure_environment() {
             log_debug "Added AI_MEMORY_PROJECT_ID=$PROJECT_NAME to .env"
         fi
 
+        # BUG-241: Write installer metadata if not already present
+        if ! grep -q '^# AIM_INSTALLED_FOR=' "$docker_env"; then
+            echo "" >> "$docker_env"
+            echo "# --- AI-MEMORY INSTALLER METADATA (DO NOT EDIT) ---" >> "$docker_env"
+            echo "# AIM_INSTALLED_FOR=${SOURCE_DIR}" >> "$docker_env"
+            echo "# AIM_INSTALLED_VERSION=${INSTALLER_VERSION}" >> "$docker_env"
+            echo "# AIM_INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$docker_env"
+            echo "# --- END METADATA ---" >> "$docker_env"
+        fi
+
         log_success "Environment configured at $docker_env"
     else
         # No source .env - create minimal template (user needs to add credentials)
@@ -1821,6 +1833,11 @@ configure_environment() {
         cat > "$docker_env" <<EOF
 # AI Memory Module Configuration
 # Generated by install.sh on $(date)
+# --- AI-MEMORY INSTALLER METADATA (DO NOT EDIT) ---
+# AIM_INSTALLED_FOR=${SOURCE_DIR}
+# AIM_INSTALLED_VERSION=${INSTALLER_VERSION}
+# AIM_INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# --- END METADATA ---
 #
 # WARNING: This is a minimal template. For full functionality, copy your
 # configured .env from the source repository to this location.
@@ -1897,7 +1914,7 @@ EOF
         # Prefer environment variable (e.g., CI sets QDRANT_API_KEY=test-ci-key)
         local gen_key="${QDRANT_API_KEY:-}"
         if [[ -z "$gen_key" ]]; then
-            gen_key=$("$INSTALL_DIR/.venv/bin/python" -c "$_gen_secret")
+            gen_key=$("$INSTALL_DIR/.venv/bin/python" -c "$_gen_secret") || { log_error "Failed to generate secret"; exit 1; }
         fi
         if [[ -n "$gen_key" ]]; then
             if grep -q "^QDRANT_API_KEY=" "$docker_env" 2>/dev/null; then
@@ -1915,7 +1932,7 @@ EOF
 
     if ! grep -q "^GRAFANA_ADMIN_PASSWORD=.\+" "$docker_env" 2>/dev/null || grep -q "^GRAFANA_ADMIN_PASSWORD=changeme$" "$docker_env" 2>/dev/null; then
         local gen_gf
-        gen_gf=$("$INSTALL_DIR/.venv/bin/python" -c "$_gen_secret")
+        gen_gf=$("$INSTALL_DIR/.venv/bin/python" -c "$_gen_secret") || { log_error "Failed to generate secret"; exit 1; }
         if [[ -n "$gen_gf" ]]; then
             if grep -q "^GRAFANA_ADMIN_PASSWORD=" "$docker_env" 2>/dev/null; then
                 sed -i.bak "s|^GRAFANA_ADMIN_PASSWORD=.*|GRAFANA_ADMIN_PASSWORD=$gen_gf|" "$docker_env" && rm -f "$docker_env.bak"
@@ -1934,7 +1951,7 @@ EOF
 
     if ! grep -q "^PROMETHEUS_ADMIN_PASSWORD=.\+" "$docker_env" 2>/dev/null || grep -q "^PROMETHEUS_ADMIN_PASSWORD=changeme$" "$docker_env" 2>/dev/null; then
         local gen_prom
-        gen_prom=$("$INSTALL_DIR/.venv/bin/python" -c "$_gen_secret")
+        gen_prom=$("$INSTALL_DIR/.venv/bin/python" -c "$_gen_secret") || { log_error "Failed to generate secret"; exit 1; }
         if [[ -n "$gen_prom" ]]; then
             if grep -q "^PROMETHEUS_ADMIN_PASSWORD=" "$docker_env" 2>/dev/null; then
                 sed -i.bak "s|^PROMETHEUS_ADMIN_PASSWORD=.*|PROMETHEUS_ADMIN_PASSWORD=$gen_prom|" "$docker_env" && rm -f "$docker_env.bak"
@@ -1947,7 +1964,7 @@ EOF
 
     if ! grep -q "^GRAFANA_SECRET_KEY=.\+" "$docker_env" 2>/dev/null || grep -q "^GRAFANA_SECRET_KEY=changeme$" "$docker_env" 2>/dev/null; then
         local gen_gsk
-        gen_gsk=$("$INSTALL_DIR/.venv/bin/python" -c "import secrets; print(secrets.token_hex(32))")
+        gen_gsk=$("$INSTALL_DIR/.venv/bin/python" -c "import secrets; print(secrets.token_hex(32))") || { log_error "Failed to generate secret"; exit 1; }
         if [[ -n "$gen_gsk" ]]; then
             if grep -q "^GRAFANA_SECRET_KEY=" "$docker_env" 2>/dev/null; then
                 sed -i.bak "s|^GRAFANA_SECRET_KEY=.*|GRAFANA_SECRET_KEY=$gen_gsk|" "$docker_env" && rm -f "$docker_env.bak"
@@ -2873,7 +2890,7 @@ setup_github_indexes() {
 
     log_debug "Creating GitHub payload indexes on discussions collection..."
 
-    local result
+    local result rc=0
     # BUG-098: Source .env so pydantic MemoryConfig reads env vars even when
     # env_file=".env" doesn't resolve (CWD is docker/ but pydantic may not find it)
     result=$(cd "$INSTALL_DIR/docker" && [[ -f .env ]] || { echo "FAILED: docker/.env not found"; exit 1; } && set -a && source .env && set +a && "$INSTALL_DIR/.venv/bin/python" -c "
@@ -2886,8 +2903,7 @@ counts = create_github_indexes(client)
 created = counts.get('created', 0)
 existing = counts.get('skipped', 0)
 print(f'OK: {created} created, {existing} already existed')
-" 2>&1)
-    local rc=$?
+" 2>&1) || rc=$?
     if [[ $rc -ne 0 || -z "$result" ]]; then
         result="FAILED (exit=$rc): ${result:-no output}"
     fi
@@ -2984,6 +3000,13 @@ setup_audit_directory() {
             echo ".claude/settings.local.json" >> "$PROJECT_PATH/.gitignore"
             log_debug "Added .claude/settings.local.json to .gitignore"
         fi
+        # M-12: _ai-memory/ contains Parzival internals — must be gitignored
+        if ! grep -q "^_ai-memory/" "$PROJECT_PATH/.gitignore" 2>/dev/null; then
+            echo "" >> "$PROJECT_PATH/.gitignore"
+            echo "# AI Memory Parzival internals (do not commit)" >> "$PROJECT_PATH/.gitignore"
+            echo "_ai-memory/" >> "$PROJECT_PATH/.gitignore"
+            log_debug "Added _ai-memory/ to .gitignore"
+        fi
     else
         # Create .gitignore if it doesn't exist
         echo "# AI Memory audit trail (ephemeral/sensitive data)" > "$PROJECT_PATH/.gitignore"
@@ -2991,7 +3014,10 @@ setup_audit_directory() {
         echo "" >> "$PROJECT_PATH/.gitignore"
         echo "# AI Memory local settings (contains API keys — do not commit)" >> "$PROJECT_PATH/.gitignore"
         echo ".claude/settings.local.json" >> "$PROJECT_PATH/.gitignore"
-        log_debug "Created .gitignore with .audit/ and settings.local.json entries"
+        echo "" >> "$PROJECT_PATH/.gitignore"
+        echo "# AI Memory Parzival internals (do not commit)" >> "$PROJECT_PATH/.gitignore"
+        echo "_ai-memory/" >> "$PROJECT_PATH/.gitignore"
+        log_debug "Created .gitignore with .audit/, settings.local.json, and _ai-memory/ entries"
     fi
 
     # Generate README (overwritten on re-install to pick up latest content)
@@ -3353,6 +3379,116 @@ deploy_parzival_shims() {
     log_success "Parzival V2 shims deployed to project"
 }
 
+# Generate thin shim SKILL.md files for Parzival skills that live in _ai-memory/pov/skills/
+# These shims allow Claude Code to discover skills in .claude/skills/ while content lives in _ai-memory/
+# Called from setup_parzival() after deploy_parzival_v2() succeeds
+generate_parzival_skill_shims() {
+    local pov_skills_dir="$PROJECT_PATH/_ai-memory/pov/skills"
+    local claude_skills_dir="$PROJECT_PATH/.claude/skills"
+
+    if [[ ! -d "$pov_skills_dir" ]]; then
+        log_debug "No Parzival skills found in _ai-memory/pov/skills/ — skipping shim generation"
+        return 0
+    fi
+
+    local shim_count=0
+    for skill_dir in "$pov_skills_dir"/*/; do
+        if [[ -d "$skill_dir" ]] && [[ -f "$skill_dir/SKILL.md" ]]; then
+            local skill_name
+            skill_name=$(basename "$skill_dir")
+            local shim_dir="$claude_skills_dir/$skill_name"
+            local real_skill="$skill_dir/SKILL.md"
+
+            # Extract frontmatter and first heading from real SKILL.md
+            local name_line description_line tools_line context_line trigger_line title_line
+            name_line=$(grep -m1 "^name:" "$real_skill" 2>/dev/null || echo "name: $skill_name")
+            description_line=$(grep -m1 "^description:" "$real_skill" 2>/dev/null || echo "description: Parzival skill")
+            tools_line=$(grep -m1 "^allowed-tools:" "$real_skill" 2>/dev/null || echo "")
+            context_line=$(grep -m1 "^context:" "$real_skill" 2>/dev/null || echo "")
+            trigger_line=$(grep -m1 "^trigger:" "$real_skill" 2>/dev/null || echo "")
+            title_line=$(grep -m1 "^# " "$real_skill" 2>/dev/null || echo "# $skill_name")
+
+            mkdir -p "$shim_dir"
+
+            # Write thin shim
+            {
+                echo "---"
+                echo "$name_line"
+                echo "$description_line"
+                if [[ -n "$tools_line" ]]; then
+                    echo "$tools_line"
+                fi
+                if [[ -n "$context_line" ]]; then
+                    echo "$context_line"
+                fi
+                if [[ -n "$trigger_line" ]]; then
+                    echo "$trigger_line"
+                fi
+                echo "---"
+                echo ""
+                echo "$title_line"
+                echo ""
+                echo "**LOAD**: Read and follow \`_ai-memory/pov/skills/$skill_name/SKILL.md\`"
+            } > "$shim_dir/SKILL.md"
+
+            shim_count=$((shim_count + 1))
+        fi
+    done
+
+    if [[ $shim_count -gt 0 ]]; then
+        log_success "Generated $shim_count Parzival skill shim(s) in .claude/skills/"
+    fi
+}
+
+# Optional: Multi-provider model dispatch setup
+# Called at end of setup_parzival() — prompts user if dispatch skill is present and not yet configured
+setup_model_dispatch() {
+    local dispatch_installer="$PROJECT_PATH/_ai-memory/pov/skills/aim-model-dispatch/scripts/install.sh"
+
+    # Fallback to .claude/skills path (pre-shim installs)
+    if [[ ! -f "$dispatch_installer" ]]; then
+        dispatch_installer="$PROJECT_PATH/.claude/skills/aim-model-dispatch/scripts/install.sh"
+    fi
+
+    if [[ ! -f "$dispatch_installer" ]]; then
+        log_debug "Model dispatch skill not found — skipping"
+        return 0
+    fi
+
+    # Skip if already configured
+    if command -v provider-dispatch &>/dev/null; then
+        log_debug "provider-dispatch already configured — skipping model dispatch setup"
+        return 0
+    fi
+
+    echo ""
+    echo "┌─────────────────────────────────────────────────────────┐"
+    echo "│  Multi-Provider Dispatch (Optional)                     │"
+    echo "│                                                         │"
+    echo "│  Enables Parzival to dispatch agents to non-Claude      │"
+    echo "│  models via OpenRouter, Ollama, Gemini, and more.       │"
+    echo "│                                                         │"
+    echo "│  Default Claude dispatch works without this.            │"
+    echo "└─────────────────────────────────────────────────────────┘"
+    echo ""
+
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        log_debug "Non-interactive mode — skipping model dispatch setup"
+        return 0
+    fi
+
+    read -rp "Configure multi-provider dispatch now? [y/N]: " setup_dispatch
+    if [[ "$setup_dispatch" =~ ^[Yy] ]]; then
+        log_info "Launching model dispatch setup..."
+        bash "$dispatch_installer" || {
+            log_warning "Model dispatch setup had issues — you can run it later:"
+            log_warning "  bash $dispatch_installer"
+        }
+    else
+        log_info "Skipped. Run later with: bash $dispatch_installer"
+    fi
+}
+
 # Deploy skill shims from INSTALL_DIR/.claude/skills/ to project
 # Replaces the skill deployment loop formerly in create_project_symlinks()
 # Stale cleanup scoped to ai-memory prefixes only (R2-NF4: never delete user custom skills)
@@ -3422,6 +3558,14 @@ deploy_ai_memory_skills() {
 
     if [[ $skills_count -gt 0 ]]; then
         log_success "Deployed $skills_count skill(s) to $PROJECT_PATH/.claude/skills/"
+    fi
+
+    # Deploy canonical skill files (required by thin shim LOAD paths)
+    local ai_mem_skills="$INSTALL_DIR/_ai-memory/skills"
+    if [[ -d "$ai_mem_skills" ]]; then
+        mkdir -p "$PROJECT_PATH/_ai-memory/skills"
+        cp -r "$ai_mem_skills/"* "$PROJECT_PATH/_ai-memory/skills/" 2>/dev/null || true
+        log_debug "Deployed _ai-memory/skills/ canonical files to project"
     fi
 }
 
@@ -3566,6 +3710,44 @@ setup_parzival() {
         # Deploy thin shims (.claude/agents/pov/, .claude/commands/pov/)
         deploy_parzival_shims
 
+        # Generate .claude/skills/ shims for Parzival skills in _ai-memory/pov/skills/
+        generate_parzival_skill_shims
+
+        # Clean up files moved/deleted in Parzival 2.1
+        local v21_stale_files=(
+            "$PROJECT_PATH/_ai-memory/pov/templates/instruction.template.md"
+            "$PROJECT_PATH/_ai-memory/pov/templates/team-prompt-2tier.template.md"
+            "$PROJECT_PATH/_ai-memory/pov/templates/team-prompt-3tier.template.md"
+            "$PROJECT_PATH/_ai-memory/pov/data/agent-selection-guide.md"
+            "$PROJECT_PATH/_ai-memory/pov/data/self-check-12-constraints.md"
+            "$PROJECT_PATH/_ai-memory/pov/constraints/execution/EC-02-use-instruction-template.md"
+            "$PROJECT_PATH/_ai-memory/pov/constraints/discovery/DC-08-analyst-before-pm-thin-input.md"
+        )
+        for stale_file in "${v21_stale_files[@]}"; do
+            if [[ -f "$stale_file" ]]; then
+                rm -f "$stale_file"
+                log_debug "Cleaned up stale Parzival 2.0 file: $(basename "$stale_file")"
+            fi
+        done
+
+        # Remove deleted workflow directory (superseded by aim-parzival-team-builder skill)
+        if [[ -d "$PROJECT_PATH/_ai-memory/pov/workflows/session/team-prompt" ]]; then
+            rm -rf "$PROJECT_PATH/_ai-memory/pov/workflows/session/team-prompt"
+            log_debug "Cleaned up stale team-prompt workflow (superseded by aim-parzival-team-builder skill)"
+        fi
+
+        # Remove stale teams archive
+        if [[ -d "$PROJECT_PATH/_ai-memory/pov/teams/archive" ]]; then
+            rm -rf "$PROJECT_PATH/_ai-memory/pov/teams/archive"
+            log_debug "Cleaned up stale teams archive"
+        fi
+
+        # Remove stale data/ directory (renamed to knowledge/ in Parzival 2.2)
+        if [[ -d "$PROJECT_PATH/_ai-memory/pov/data" ]]; then
+            rm -rf "$PROJECT_PATH/_ai-memory/pov/data"
+            log_debug "Cleaned up stale pov/data/ directory (renamed to knowledge/ in Parzival 2.2)"
+        fi
+
         # Deploy oversight templates (existing function — unchanged)
         deploy_oversight_templates
 
@@ -3587,6 +3769,9 @@ setup_parzival() {
                 log_warning "Failed to update Parzival settings in settings.json"
             }
         fi
+
+        # Optional: multi-provider model dispatch setup
+        setup_model_dispatch
 
         log_success "Parzival V2 enabled"
     else
