@@ -141,25 +141,25 @@ create_backup() {
     # .env file (user configuration)
     if [[ -f "$INSTALL_DIR/.env" ]]; then
         cp "$INSTALL_DIR/.env" "$BACKUP_DIR/"
-        ((backed_up++))
+        backed_up=$((backed_up + 1))
     fi
 
     # Claude settings.json (hook configuration)
     if [[ -f "$HOME/.claude/settings.json" ]]; then
         cp "$HOME/.claude/settings.json" "$BACKUP_DIR/"
-        ((backed_up++))
+        backed_up=$((backed_up + 1))
     fi
 
     # Docker compose overrides (if present)
     if [[ -f "$INSTALL_DIR/docker/docker-compose.override.yml" ]]; then
         cp "$INSTALL_DIR/docker/docker-compose.override.yml" "$BACKUP_DIR/"
-        ((backed_up++))
+        backed_up=$((backed_up + 1))
     fi
 
     # Custom scripts (if any)
     if [[ -d "$INSTALL_DIR/custom" ]]; then
         cp -r "$INSTALL_DIR/custom" "$BACKUP_DIR/"
-        ((backed_up++))
+        backed_up=$((backed_up + 1))
     fi
 
     log_success "Backup created at $BACKUP_DIR ($backed_up files/dirs)"
@@ -333,7 +333,7 @@ run_migrations() {
             log_info "Running $(basename "$migration")..."
 
             if python3 "$migration"; then
-                ((migrations_run++))
+                migrations_run=$((migrations_run + 1))
             else
                 log_warning "Migration failed: $(basename "$migration")"
                 echo "This may not be critical - continuing update"
@@ -361,7 +361,7 @@ cleanup_old_backups() {
     local deleted=0
     while IFS= read -r old_backup; do
         rm -rf "$old_backup"
-        ((deleted++))
+        deleted=$((deleted + 1))
     done < <(find "$backup_base" -maxdepth 1 -type d -mtime +$BACKUP_RETENTION_DAYS)
 
     if [[ $deleted -gt 0 ]]; then
