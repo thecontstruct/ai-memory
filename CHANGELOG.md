@@ -27,18 +27,54 @@ Parzival V2.1 shim architecture, 7 dispatch skills, and PLAN-018 Zero Debt Sprin
 
 ### Upgrade Instructions
 
-#### Step 1: Pull latest and run Option 1 installer
+> **Important**: The installer (Option 1) automatically merges new keys from `docker/.env.example` into your `docker/.env`, but it does **not** update existing key values. Review your `.env` after install to verify new keys have correct values for your setup.
+
+#### Step 1: Pull latest code
 
 ```bash
 cd /path/to/your/ai-memory-clone
 git pull origin main
+```
+
+#### Step 2: Review new environment variables
+
+Check `docker/.env.example` (updated by pull) for any new keys added in this release. The installer will append new keys to your `.env` with their default values, but you should review them after install. Existing key values in your `.env` are never overwritten.
+
+**New in v2.2.4** — add these to your `~/.ai-memory/docker/.env` if missing:
+
+```bash
+# Section 3 — Feature Toggles (after SECURITY_SCANNING_ENABLED):
+MONITORING_ENABLED=true
+
+# Section 4.7 — GitHub Sync (uncomment if still commented):
+GITHUB_SYNC_TOTAL_TIMEOUT=1800
+GITHUB_SYNC_INSTALL_TIMEOUT=600
+GITHUB_SYNC_PER_FILE_TIMEOUT=60
+GITHUB_SYNC_CIRCUIT_BREAKER_THRESHOLD=5
+GITHUB_SYNC_CIRCUIT_BREAKER_RESET=60
+
+# Section 5 — Internal (after EMBEDDING_PORT):
+QDRANT_TIMEOUT=30
+QDRANT_USE_HTTPS=false
+
+# Section 5 — Internal (before GRAFANA_ADMIN_USER):
+AI_MEMORY_QUEUE_DIR=~/.ai-memory/queue
+```
+
+**If upgrading from pre-v2.2.4** — also rename these (old names still work with deprecation warning):
+- `BMAD_LOG_LEVEL` → `AI_MEMORY_LOG_LEVEL`
+- `BMAD_LOG_FORMAT` → `AI_MEMORY_LOG_FORMAT`
+
+#### Step 3: Run Option 1 installer
+
+```bash
 ./scripts/install.sh /path/to/your-project
 # Select Option 1 (Add project to existing installation)
 ```
 
-This syncs all code, scripts, monitoring, Docker files, skills, evaluators, and Parzival V2 package to your installation. Your `docker/.env` credentials are preserved automatically.
+This syncs all code, scripts, monitoring, Docker files, skills, evaluators, and Parzival V2 package to your installation. Your `docker/.env` credentials are preserved.
 
-#### Step 2: Rebuild containers with baked-in code
+#### Step 4: Rebuild containers with baked-in code
 
 Four containers have code copied into their Docker images at build time and must be rebuilt after any code update:
 
@@ -54,7 +90,7 @@ docker compose -f docker-compose.yml -f docker-compose.langfuse.yml \
   build --no-cache trace-flush-worker
 ```
 
-#### Step 3: Recreate rebuilt containers and restart volume-mounted containers
+#### Step 5: Recreate rebuilt containers and restart volume-mounted containers
 
 ```bash
 # Recreate containers with new images
@@ -66,20 +102,14 @@ docker compose -f docker-compose.yml -f docker-compose.langfuse.yml restart \
   streamlit evaluator-scheduler
 ```
 
-#### Step 4: Verify all containers are healthy
+#### Step 6: Verify all containers are healthy
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.langfuse.yml ps
 # All containers should show "(healthy)"
 ```
 
-#### Step 5: Update environment variables
-
-Rename log level env vars in `~/.ai-memory/docker/.env` (old names still work with a deprecation warning):
-- `BMAD_LOG_LEVEL` → `AI_MEMORY_LOG_LEVEL`
-- `BMAD_LOG_FORMAT` → `AI_MEMORY_LOG_FORMAT`
-
-#### Step 6: Langfuse (optional)
+#### Step 7: Langfuse (optional)
 
 If you use Langfuse observability, install the extras group:
 ```bash
@@ -105,6 +135,9 @@ pip install ai-memory[observability]
 - Option 1 now syncs all directories including Docker files, monitoring, evaluators, and docs (BUG-244 fix)
 
 ### Fixed
+- **Installer Option 1 skips pip install**: `update_shared_scripts()` synced new `pyproject.toml`/`requirements.txt` but never re-ran `pip install` in the venv — new dependencies (e.g. croniter) were missing until manual pip. Now runs `pip install -e .[dev]` in venv during Option 1 updates.
+- **`__version__.py` out of sync**: Was stuck at `2.2.1` while `pyproject.toml` said `2.2.4`. Updated to `2.2.4` with version history entry.
+- **github-sync freshness log write failure**: Container has `read_only: true` but `/app/.audit/logs/` had no writable volume mount — freshness scanner log writes failed silently. Added bind mount for logs directory.
 - **BUG-244**: Installer Option 1 (`update_shared_scripts`) only synced 4 of 13 directories — extracted shared `sync_installed_files()` function used by both fresh install and Option 1. Also added Docker file sync with `.env` backup/restore to Option 1 path. Fixed pre-existing `log_warn` → `log_warning` typos.
 - **BUG-236**: `docker/github-sync/requirements.txt` missing `tiktoken` — container crash loop after rebuild due to `memory.__init__` → `storage` → `chunking` → `truncation` → `tiktoken` import chain
 - **TD-308**: Single `docker/.env` source of truth — restructured .env architecture
