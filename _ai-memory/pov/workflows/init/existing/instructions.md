@@ -9,7 +9,7 @@ description: 'Existing project onboarding: read files, audit state, identify bra
 
 - An existing project with prior history (commits, documentation, or prior oversight records) is being brought under Parzival oversight
 - The project directory is accessible
-- Analyst agent (`bmad-bmm-analyst`) is available for the audit
+- Analyst agent (`bmad-agent-analyst`) is available for the audit
 - AI Memory installation (`~/.ai-memory`) must be accessible
 
 ## Workflow Overview

@@ -9,7 +9,7 @@ description: 'Research protocol: define question, check project files, search do
 
 - A specific research question has been identified
 - Project documentation, specification files, and oversight workspace are accessible
-- Analyst agent (`bmad-bmm-analyst`) is available for layer 3 research
+- Analyst agent (`bmad-agent-analyst`) is available for layer 3 research
 
 ## Workflow Overview
 

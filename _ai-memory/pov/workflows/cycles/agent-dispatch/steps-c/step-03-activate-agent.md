@@ -56,12 +56,12 @@ Once the teammate is spawned with fresh context, activate the correct agent. For
 ### 1. Activate the BMAD Agent
 
 Use the appropriate agent activation command within the teammate context:
-- Analyst: /bmad-agent-bmm-analyst
-- PM: /bmad-agent-bmm-pm
-- Architect: /bmad-agent-bmm-architect
-- UX Designer: /bmad-agent-bmm-ux-designer
-- SM: /bmad-agent-bmm-sm
-- DEV: /bmad-agent-bmm-dev
+- Analyst: /bmad-agent-analyst
+- PM: /bmad-agent-pm
+- Architect: /bmad-agent-architect
+- UX Designer: /bmad-agent-ux-designer
+- SM: /bmad-agent-sm
+- DEV: /bmad-agent-dev
 
 ---
 

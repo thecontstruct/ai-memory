@@ -8,9 +8,9 @@ description: 'Architecture phase: assess inputs, dispatch architect, create epic
 ## Prerequisites
 
 - An approved PRD from the discovery phase
-- Architect agent (`bmad-bmm-architect`) is available
-- UX Designer agent (`bmad-bmm-ux-designer`) is available (if UI work is in scope)
-- PM agent (`bmad-bmm-pm`) is available for epics/stories creation
+- Architect agent (`bmad-agent-architect`) is available
+- UX Designer agent (`bmad-agent-ux-designer`) is available (if UI work is in scope)
+- PM agent (`bmad-agent-pm`) is available for epics/stories creation
 
 ## Workflow Overview
 

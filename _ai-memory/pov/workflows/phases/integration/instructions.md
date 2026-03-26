@@ -8,8 +8,8 @@ description: 'Integration phase: establish scope, cross-story review, architect 
 ## Prerequisites
 
 - All stories in the sprint have been completed through the execution phase
-- Dev agent (`bmad-bmm-dev`) is available for full review and fix implementation
-- Architect agent (`bmad-bmm-architect`) is available for cohesion review
+- Dev agent (`bmad-agent-dev`) is available for full review and fix implementation
+- Architect agent (`bmad-agent-architect`) is available for cohesion review
 - Feature branch is in a state ready for integration testing
 
 ## Workflow Overview

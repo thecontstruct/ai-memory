@@ -40,8 +40,8 @@ Reference: MEMORY.md — "Use Teammates Not Subagents" (PM #185 lesson).
 
 ## Applies To
 
-- Every BMAD agent activation: bmad-bmm-dev, bmad-bmm-pm, bmad-bmm-architect, bmad-bmm-sm,
-  bmad-bmm-analyst, bmad-bmm-ux, bmad-bmm-quick-dev, and any future BMAD agents
+- Every BMAD agent activation: bmad-agent-dev, bmad-agent-pm, bmad-agent-architect, bmad-agent-sm,
+  bmad-agent-analyst, bmad-agent-ux-designer, bmad-agent-quick-flow-solo-dev, and any future BMAD agents
 - All dispatch modes: execution (one-shot) and planning (relay protocol)
 
 ## Self-Check

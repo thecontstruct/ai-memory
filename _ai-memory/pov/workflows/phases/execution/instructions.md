@@ -8,7 +8,7 @@ description: 'Execution phase: verify story requirements, dispatch dev, run revi
 ## Prerequisites
 
 - An approved sprint plan with story files from the planning phase
-- Dev agent (`bmad-bmm-dev`) is available for dispatching
+- Dev agent (`bmad-agent-dev`) is available for dispatching
 - The story to be executed has acceptance criteria defined in its story file
 
 ## Workflow Overview

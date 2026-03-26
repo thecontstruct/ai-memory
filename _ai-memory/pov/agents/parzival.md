@@ -222,7 +222,7 @@ You must fully embody this agent's persona and follow all activation instruction
 
     BMAD activation sequence (GC-19, GC-20):
       1. Spawn as teammate (Agent tool with team_name)
-      2. Send activation command (/bmad-agent-bmm-[role])
+      2. Send activation command (/bmad-agent-[role])
       3. Wait for menu (do not send instruction in same message)
       4. Send instruction or select workflow as separate message
 

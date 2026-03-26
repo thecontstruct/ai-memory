@@ -4,26 +4,24 @@
 
 | Agent Type | Activation Command |
 |---|---|
-| Developer | `/bmad-agent-bmm-dev` |
-| PM (Product Manager) | `/bmad-agent-bmm-pm` |
-| Analyst | `/bmad-agent-bmm-analyst` |
-| Architect | `/bmad-agent-bmm-architect` |
-| Scrum Master | `/bmad-agent-bmm-sm` |
-| QA Engineer | `/bmad-agent-bmm-qa` |
-| UX Designer | `/bmad-agent-bmm-ux-designer` |
-| Tech Writer | `/bmad-agent-bmm-tech-writer` |
-| Quick Flow Solo Dev | `/bmad-agent-bmm-quick-flow-solo-dev` |
-| BMAD Master | `/bmad-agent-bmad-master` |
-| Agent Builder | `/bmad-agent-bmb-agent-builder` |
-| Module Builder | `/bmad-agent-bmb-module-builder` |
-| Workflow Builder | `/bmad-agent-bmb-workflow-builder` |
-| Brainstorming Coach | `/bmad-agent-cis-brainstorming-coach` |
-| Creative Problem Solver | `/bmad-agent-cis-creative-problem-solver` |
-| Design Thinking Coach | `/bmad-agent-cis-design-thinking-coach` |
-| Innovation Strategist | `/bmad-agent-cis-innovation-strategist` |
-| Presentation Master | `/bmad-agent-cis-presentation-master` |
-| Storyteller | `/bmad-agent-cis-storyteller` |
-| Test Architect (TEA) | `/bmad-agent-tea-tea` |
+| Developer | `/bmad-agent-dev` |
+| PM (Product Manager) | `/bmad-agent-pm` |
+| Analyst | `/bmad-agent-analyst` |
+| Architect | `/bmad-agent-architect` |
+| Scrum Master | `/bmad-agent-sm` |
+| QA Engineer | `/bmad-agent-qa` |
+| UX Designer | `/bmad-agent-ux-designer` |
+| Tech Writer | `/bmad-agent-tech-writer` |
+| Quick Flow Solo Dev | `/bmad-agent-quick-flow-solo-dev` |
+| Agent Builder | `/bmad-agent-builder` |
+| Workflow Builder | `/bmad-workflow-builder` |
+| Brainstorming Coach | `/bmad-cis-agent-brainstorming-coach` |
+| Creative Problem Solver | `/bmad-cis-agent-creative-problem-solver` |
+| Design Thinking Coach | `/bmad-cis-agent-design-thinking-coach` |
+| Innovation Strategist | `/bmad-cis-agent-innovation-strategist` |
+| Presentation Master | `/bmad-cis-agent-presentation-master` |
+| Storyteller | `/bmad-cis-agent-storyteller` |
+| Test Architect (TEA) | `/bmad-tea` |
 
 ## Task-to-Agent Selection Guide
 
@@ -44,7 +42,6 @@ When the task description does not specify an agent:
 | Validate documentation | Tech Writer | `VD` |
 | Write and run tests | QA | Use menu |
 | Build new BMAD agents | Agent Builder | Use menu |
-| Build new BMAD modules | Module Builder | Use menu |
 | Build new BMAD workflows | Workflow Builder | Use menu |
 
 ## Direct Command to Agent Mapping
@@ -53,11 +50,11 @@ When the user specifies a direct workflow command, map it to two-phase activatio
 
 | Direct Command | Activate Agent | Menu Code |
 |---|---|---|
-| `/bmad-bmm-code-review` | `/bmad-agent-bmm-dev` | `CR` |
-| `/bmad-bmm-dev-story` | `/bmad-agent-bmm-dev` | `DS` |
-| `/bmad-bmm-create-prd` | `/bmad-agent-bmm-pm` | `CP` |
-| `/bmad-bmm-validate-prd` | `/bmad-agent-bmm-pm` | `VP` |
-| `/bmad-bmm-create-epics-and-stories` | `/bmad-agent-bmm-pm` | `CE` |
-| `/bmad-bmm-create-architecture` | `/bmad-agent-bmm-architect` | Use menu |
-| `/bmad-bmm-sprint-planning` | `/bmad-agent-bmm-sm` | Use menu |
-| `/bmad-bmm-create-ux-design` | `/bmad-agent-bmm-ux-designer` | Use menu |
+| `/bmad-code-review` | `/bmad-agent-dev` | `CR` |
+| `/bmad-dev-story` | `/bmad-agent-dev` | `DS` |
+| `/bmad-create-prd` | `/bmad-agent-pm` | `CP` |
+| `/bmad-validate-prd` | `/bmad-agent-pm` | `VP` |
+| `/bmad-create-epics-and-stories` | `/bmad-agent-pm` | `CE` |
+| `/bmad-create-architecture` | `/bmad-agent-architect` | Use menu |
+| `/bmad-sprint-planning` | `/bmad-agent-sm` | Use menu |
+| `/bmad-create-ux-design` | `/bmad-agent-ux-designer` | Use menu |

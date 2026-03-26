@@ -9,8 +9,8 @@ description: 'Maintenance phase: triage issue, classify legitimacy, diagnose, di
 
 - Parzival oversight session active
 - A maintenance issue has been reported (bug, regression, performance degradation, or operational concern)
-- Analyst agent (`bmad-bmm-analyst`) is available for diagnosis
-- Dev agent (`bmad-bmm-dev`) is available for fix implementation
+- Analyst agent (`bmad-agent-analyst`) is available for diagnosis
+- Dev agent (`bmad-agent-dev`) is available for fix implementation
 
 ## Workflow Overview
 

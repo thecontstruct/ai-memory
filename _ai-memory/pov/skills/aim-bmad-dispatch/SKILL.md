@@ -21,7 +21,7 @@ description: BMAD agent selection, activation commands, and persona loading -- L
 
 Use aim-bmad-dispatch when:
 - The task requires ANY BMAD agent role (see full activation table below)
-- The agent requires persona activation via `/bmad-agent-*` commands
+- The agent requires persona activation via `/bmad-agent-*` skill commands
 
 Use aim-agent-dispatch instead when:
 - The agent does NOT need a BMAD persona
@@ -83,9 +83,9 @@ BMAD agents operate in two modes. Determine the mode BEFORE activation:
 **Execution mode** — agent receives a one-shot instruction and produces output:
 - DEV implementing a story, DEV reviewing code, SM creating story files
 - After BMAD activation (step 4 above), send the workflow command FIRST:
-  - DEV implementing: send `/bmad-bmm-dev-story`, wait for story prompt, THEN send instruction
-  - DEV reviewing: send `/bmad-bmm-code-review`, wait for review prompt, THEN send instruction
-  - SM creating stories: send `/bmad-bmm-create-story`, wait for prompt, THEN send instruction
+  - DEV implementing: send `/bmad-dev-story`, wait for story prompt, THEN send instruction
+  - DEV reviewing: send `/bmad-code-review`, wait for review prompt, THEN send instruction
+  - SM creating stories: send `/bmad-create-story`, wait for prompt, THEN send instruction
 - Use the standard instruction template from aim-agent-dispatch for the instruction content
 - Hand off to aim-agent-lifecycle Steps 4-9
 
@@ -103,7 +103,7 @@ When dispatching a BMAD agent in planning mode, Parzival acts as the intelligent
 **Activation sequence** (replaces Steps 2-6 for planning mode):
 
 1. **Spawn agent** as teammate (GC-19). Set AI_MEMORY_AGENT_ID.
-2. **Activate** with the BMAD command (e.g., `/bmad-agent-bmm-pm`).
+2. **Activate** with the BMAD command (e.g., `/bmad-agent-pm`).
 3. **Wait for agent menu** — do NOT send anything until the agent displays its greeting/menu. The agent needs to fully load its persona and workflow options.
 4. **Select the workflow** — send the appropriate menu selection based on the task (e.g., "create PRD", "create architecture"). If unsure which workflow, use `/bmad-help` for guidance.
 5. **Agent begins asking questions** — the BMAD agent follows its own workflow and asks discovery/design questions.
@@ -152,66 +152,59 @@ Spawn the BMAD agent as a teammate in parallel (Agent tool with team_name), then
 
 > **DEC-123**: aim-bmad-dispatch is the single entry point for all BMAD agent dispatch. aim-model-dispatch/bmad-dispatch provides implementation-level routing (backend selection, model selection, tmux launch) after initial dispatch.
 
-#### Core Project Agents (bmm-)
+#### Core Project Agents
 
 | Agent | Activation Command | Description |
 |-------|-------------------|-------------|
-| Analyst | `/bmad-agent-bmm-analyst` | Research, codebase analysis, domain investigation |
-| PM (Product Manager) | `/bmad-agent-bmm-pm` | PRD creation/validation, epics and stories |
-| Architect | `/bmad-agent-bmm-architect` | System architecture design, readiness checks |
-| Developer (DEV) | `/bmad-agent-bmm-dev` | Code implementation, code review |
-| Scrum Master (SM) | `/bmad-agent-bmm-sm` | Sprint planning, story creation, retrospectives |
-| QA Engineer | `/bmad-agent-bmm-qa` | Test planning, test execution, quality validation |
-| UX Designer | `/bmad-agent-bmm-ux-designer` | User flows, screen design, UX research |
-| Tech Writer | `/bmad-agent-bmm-tech-writer` | Documentation writing and validation |
-| Quick Flow Solo Dev | `/bmad-agent-bmm-quick-flow-solo-dev` | Lightweight single-dev flow (analysis through implementation) |
+| Analyst | `/bmad-agent-analyst` | Research, codebase analysis, domain investigation |
+| PM (Product Manager) | `/bmad-agent-pm` | PRD creation/validation, epics and stories |
+| Architect | `/bmad-agent-architect` | System architecture design, readiness checks |
+| Developer (DEV) | `/bmad-agent-dev` | Code implementation, code review |
+| Scrum Master (SM) | `/bmad-agent-sm` | Sprint planning, story creation, retrospectives |
+| QA Engineer | `/bmad-agent-qa` | Test planning, test execution, quality validation |
+| UX Designer | `/bmad-agent-ux-designer` | User flows, screen design, UX research |
+| Tech Writer | `/bmad-agent-tech-writer` | Documentation writing and validation |
+| Quick Flow Solo Dev | `/bmad-agent-quick-flow-solo-dev` | Lightweight single-dev flow (analysis through implementation) |
 
-#### BMAD Framework Agents
-
-| Agent | Activation Command | Description |
-|-------|-------------------|-------------|
-| BMAD Master | `/bmad-agent-bmad-master` | BMAD framework orchestration and guidance |
-
-#### Builder Agents (bmb-)
+#### Builder Agents
 
 | Agent | Activation Command | Description |
 |-------|-------------------|-------------|
-| Agent Builder | `/bmad-agent-bmb-agent-builder` | Build new BMAD agent definitions |
-| Module Builder | `/bmad-agent-bmb-module-builder` | Build new BMAD modules |
-| Workflow Builder | `/bmad-agent-bmb-workflow-builder` | Build new BMAD workflows |
+| Agent Builder | `/bmad-agent-builder` | Build new BMAD agent definitions |
+| Workflow Builder | `/bmad-workflow-builder` | Build new BMAD workflows |
 
-#### CIS Coaches (cis-)
-
-| Agent | Activation Command | Description |
-|-------|-------------------|-------------|
-| Brainstorming Coach | `/bmad-agent-cis-brainstorming-coach` | Facilitated brainstorming sessions |
-| Creative Problem Solver | `/bmad-agent-cis-creative-problem-solver` | Creative approaches to complex problems |
-| Design Thinking Coach | `/bmad-agent-cis-design-thinking-coach` | Design thinking methodology facilitation |
-| Innovation Strategist | `/bmad-agent-cis-innovation-strategist` | Innovation strategy and ideation |
-| Presentation Master | `/bmad-agent-cis-presentation-master` | Presentation creation and coaching |
-| Storyteller | `/bmad-agent-cis-storyteller` | Narrative crafting and storytelling |
-
-#### Test Agents (tea-)
+#### CIS Coaches
 
 | Agent | Activation Command | Description |
 |-------|-------------------|-------------|
-| Test Architect (TEA) | `/bmad-agent-tea-tea` | Test architecture and strategy design |
+| Brainstorming Coach | `/bmad-cis-agent-brainstorming-coach` | Facilitated brainstorming sessions |
+| Creative Problem Solver | `/bmad-cis-agent-creative-problem-solver` | Creative approaches to complex problems |
+| Design Thinking Coach | `/bmad-cis-agent-design-thinking-coach` | Design thinking methodology facilitation |
+| Innovation Strategist | `/bmad-cis-agent-innovation-strategist` | Innovation strategy and ideation |
+| Presentation Master | `/bmad-cis-agent-presentation-master` | Presentation creation and coaching |
+| Storyteller | `/bmad-cis-agent-storyteller` | Narrative crafting and storytelling |
+
+#### Test Agents
+
+| Agent | Activation Command | Description |
+|-------|-------------------|-------------|
+| Test Architect (TEA) | `/bmad-tea` | Test architecture and strategy design |
 
 **Workflow commands by phase** (sent AFTER activation, when in planning mode):
 
 | Phase | Agent | Workflow Command |
 |-------|-------|-----------------|
-| Research | Analyst | `/bmad-bmm-market-research`, `/bmad-bmm-domain-research`, `/bmad-bmm-technical-research` |
-| Discovery | Analyst | `/bmad-bmm-create-product-brief` |
-| Discovery (or any phase) | PM | `/bmad-bmm-create-prd`, `/bmad-bmm-validate-prd`, `/bmad-bmm-edit-prd` |
-| Architecture | Architect | `/bmad-bmm-create-architecture` |
-| Architecture | PM | `/bmad-bmm-create-epics-and-stories` |
-| Architecture | Architect | `/bmad-bmm-check-implementation-readiness` |
-| Architecture | UX Designer | `/bmad-bmm-create-ux-design` |
-| Planning | SM | `/bmad-bmm-sprint-planning`, `/bmad-bmm-create-story` |
-| Execution | DEV | `/bmad-bmm-dev-story` |
-| Execution | DEV | `/bmad-bmm-code-review` |
-| Release | SM | `/bmad-bmm-retrospective` |
+| Research | Analyst | `/bmad-market-research`, `/bmad-domain-research`, `/bmad-technical-research` |
+| Discovery | Analyst | `/bmad-product-brief` |
+| Discovery (or any phase) | PM | `/bmad-create-prd`, `/bmad-validate-prd`, `/bmad-edit-prd` |
+| Architecture | Architect | `/bmad-create-architecture` |
+| Architecture | PM | `/bmad-create-epics-and-stories` |
+| Architecture | Architect | `/bmad-check-implementation-readiness` |
+| Architecture | UX Designer | `/bmad-create-ux-design` |
+| Planning | SM | `/bmad-sprint-planning`, `/bmad-create-story` |
+| Execution | DEV | `/bmad-dev-story` |
+| Execution | DEV | `/bmad-code-review` |
+| Release | SM | `/bmad-retrospective` |
 
 Set `AI_MEMORY_AGENT_ID` environment variable when spawning.
 

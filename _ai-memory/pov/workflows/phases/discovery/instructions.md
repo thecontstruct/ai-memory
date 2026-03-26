@@ -10,7 +10,7 @@ description: 'Discovery phase: assess inputs, gather requirements, create PRD wi
 - Parzival oversight session active with the discovery phase loaded
 - A new project or feature initiative has been identified requiring formal discovery
 - PRD template is accessible at the configured template path
-- PM agent (`bmad-bmm-pm`) and Analyst agent (`bmad-bmm-analyst`) are available for dispatching
+- PM agent (`bmad-agent-pm`) and Analyst agent (`bmad-agent-analyst`) are available for dispatching
 
 ## Workflow Overview
 

@@ -10,7 +10,7 @@ description: 'Release phase: compile changelog, deployment checklist, rollback p
 - Sprint integration has been approved through the integration phase
 - All sprint stories are in a complete state
 - Release artifacts (changelog template, deployment checklist) are accessible
-- Dev agent (`bmad-bmm-dev`) is available for deployment verification
+- Dev agent (`bmad-agent-dev`) is available for deployment verification
 
 ## Workflow Overview
 

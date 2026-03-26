@@ -19,13 +19,13 @@ description: Generic agent instruction preparation and activation -- Layer 3a
 ## When to Use This Skill
 
 Use aim-agent-dispatch when:
-- The agent does NOT need a BMAD persona (no /bmad-agent-bmm-* activation)
+- The agent does NOT need a BMAD persona (no /bmad-agent-* activation)
 - The agent is a generic worker spawned for a specific task
 - Examples: code-reviewer agent, verify-implementation agent, skill-creator agent
 
 Use aim-bmad-dispatch instead when:
 - The agent IS a BMAD agent (Analyst, PM, Architect, DEV, SM, UX Designer)
-- The agent requires persona activation via /bmad-agent-bmm-* commands
+- The agent requires persona activation via /bmad-agent-* commands
 
 ---
 
