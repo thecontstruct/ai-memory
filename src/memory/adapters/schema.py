@@ -202,6 +202,61 @@ def normalize_claude_event(raw: dict, hook_event_name: str) -> dict:
     }
 
 
+# Gemini hook-to-canonical name mapping
+_GEMINI_HOOK_MAP = {
+    "SessionStart": "SessionStart",
+    "AfterTool": "PostToolUse",
+    "BeforeTool": "PreToolUse",
+    "BeforeAgent": "UserPromptSubmit",
+    "PreCompress": "PreCompact",
+    "SessionEnd": "SessionEnd",
+}
+
+# Gemini tool name → canonical tool name mapping
+_GEMINI_TOOL_MAP = {
+    "edit_file": "Edit",
+    "write_file": "Write",
+    "create_file": "Write",
+    "run_shell_command": "Bash",
+}
+
+
+def normalize_gemini_event(raw: dict, native_hook_name: str) -> dict:
+    """Normalize Gemini CLI native stdin to canonical event schema.
+
+    Gemini uses different hook names (AfterTool vs PostToolUse) and tool names
+    (edit_file vs Edit). This normalizer maps both to canonical values.
+    """
+    canonical_hook = _GEMINI_HOOK_MAP.get(native_hook_name, native_hook_name)
+
+    raw_tool_name = raw.get("tool_name")
+    if raw_tool_name:
+        mcp_name = normalize_mcp_tool_name(raw_tool_name)
+        tool_name = mcp_name or _GEMINI_TOOL_MAP.get(raw_tool_name, raw_tool_name)
+    else:
+        tool_name = None
+
+    tool_response = raw.get("tool_response")
+    if isinstance(tool_response, dict):
+        tool_response = tool_response.get("llmContent", tool_response)
+
+    return {
+        "session_id": resolve_session_id(raw),
+        "cwd": resolve_cwd(raw, "gemini"),
+        "hook_event_name": canonical_hook,
+        "tool_name": tool_name,
+        "tool_input": raw.get("tool_input"),
+        "tool_response": tool_response,
+        "transcript_path": raw.get("transcript_path"),
+        "user_prompt": raw.get("prompt")
+        if canonical_hook == "UserPromptSubmit"
+        else None,
+        "ide_source": "gemini",
+        "trigger": raw.get("trigger"),
+        "is_background_agent": raw.get("is_background_agent", False),
+    }
+
+
 def fork_to_background(canonical_event: dict, pipeline_script_path: str) -> None:
     """Fork storage to background. Adapter exits immediately after this call.
 
