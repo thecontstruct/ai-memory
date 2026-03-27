@@ -1,0 +1,248 @@
+---
+# Sprint Status — FEATURE-001: Multi-IDE Support
+# Generated: 2026-03-27
+# Scrum Master: Sprint Planning Agent
+
+sprint:
+  number: 1
+  name: "Foundation + Claude Migration + Gemini Adapter"
+  goal: "Establish the canonical event schema, migrate Claude Code hooks through it, and deliver a working Gemini CLI adapter — proving the adapter pattern end-to-end before building Cursor and Codex."
+  status: planned
+  started: null
+  completed: null
+
+velocity:
+  estimated: null  # First sprint — no historical velocity
+
+# ---------------------------------------------------------------------------
+# STORIES
+# Status values:
+#   sprint_1  — selected for this sprint
+#   backlog   — not selected, available for future sprints
+#   blocked   — has unmet dependency on a non-sprint-1 story
+# ---------------------------------------------------------------------------
+
+stories:
+
+  # -------------------------------------------------------------------------
+  # Epic 1: Canonical Schema and Shared Infrastructure
+  # Rationale: Every adapter in every epic depends on this. Must land first.
+  # -------------------------------------------------------------------------
+  epic_1:
+    - id: "1.1"
+      title: "Create adapters/schema.py with canonical event schema and validation"
+      status: sprint_1
+      depends_on: []
+      effort: M
+
+    - id: "1.2"
+      title: "Add normalize_mcp_tool_name() to schema.py"
+      status: sprint_1
+      depends_on: ["1.1"]
+      effort: S
+
+    - id: "1.3"
+      title: "Add resolve_session_id() and resolve_cwd() to schema.py"
+      status: sprint_1
+      depends_on: ["1.1"]
+      effort: S
+
+    - id: "1.4"
+      title: "Add normalize_claude_event() and fork_to_background() to schema.py"
+      status: sprint_1
+      depends_on: ["1.1", "1.2", "1.3"]
+      effort: S
+
+    - id: "1.5"
+      title: "Add ide_source to store_async.py payload and move pipeline scripts"
+      status: sprint_1
+      depends_on: ["1.4"]
+      effort: M
+
+  # -------------------------------------------------------------------------
+  # Epic 2: Claude Code Adapter Migration
+  # Rationale: Validates the canonical schema against real production payloads
+  # before writing any new adapter. Zero regressions is the quality gate.
+  # -------------------------------------------------------------------------
+  epic_2:
+    - id: "2.1"
+      title: "Migrate Claude Code hook scripts to adapters/claude/"
+      status: sprint_1
+      depends_on: ["1.5"]
+      effort: M
+
+    - id: "2.2"
+      title: "Update .claude/settings.json command paths to adapters/claude/"
+      status: sprint_1
+      depends_on: ["2.1"]
+      effort: S
+
+  # -------------------------------------------------------------------------
+  # Epic 3: Gemini CLI Adapter
+  # Rationale: Selected as the first non-Claude adapter because Gemini has the
+  # cleanest hook API mapping, requires strict JSON-only stdout (validates the
+  # contract harder than Cursor/Codex), and has no known platform gaps.
+  # -------------------------------------------------------------------------
+  epic_3:
+    - id: "3.1"
+      title: "Create Gemini session_start.py adapter"
+      status: sprint_1
+      depends_on: ["1.3", "1.4"]
+      effort: M
+
+    - id: "3.2"
+      title: "Create Gemini after_tool_capture.py adapter"
+      status: sprint_1
+      depends_on: ["1.2", "1.4", "1.5"]
+      effort: M
+
+    - id: "3.3"
+      title: "Create Gemini error_detection.py and error_pattern_capture.py adapters"
+      status: sprint_1
+      depends_on: ["1.4", "1.5"]
+      effort: S
+
+    - id: "3.4"
+      title: "Create Gemini pre_compress.py adapter"
+      status: sprint_1
+      depends_on: ["1.4", "1.5"]
+      effort: S
+
+    - id: "3.5"
+      title: "Create Gemini TOML command templates"
+      status: sprint_1
+      depends_on: ["1.1"]
+      effort: S
+
+  # -------------------------------------------------------------------------
+  # Epic 4: Cursor IDE Adapter
+  # Deferred: Cursor has unique fields (is_background_agent, workspace_roots,
+  # conversation_id) and no top-level env block — enough complexity to make it
+  # a clean Sprint 2 body of work once the pattern is proven with Gemini.
+  # -------------------------------------------------------------------------
+  epic_4:
+    - id: "4.1"
+      title: "Create Cursor session_start.py adapter"
+      status: backlog
+      depends_on: ["1.3", "1.4"]
+      effort: M
+
+    - id: "4.2"
+      title: "Create Cursor post_tool_capture.py adapter"
+      status: backlog
+      depends_on: ["1.2", "1.4", "1.5"]
+      effort: M
+
+    - id: "4.3"
+      title: "Create Cursor error_detection.py and error_pattern_capture.py adapters"
+      status: backlog
+      depends_on: ["1.4", "1.5"]
+      effort: S
+
+    - id: "4.4"
+      title: "Create Cursor pre_compact.py adapter"
+      status: backlog
+      depends_on: ["1.4", "1.5"]
+      effort: S
+
+    - id: "4.5"
+      title: "Create Cursor SKILL.md templates"
+      status: backlog
+      depends_on: ["1.1"]
+      effort: S
+
+  # -------------------------------------------------------------------------
+  # Epic 5: Codex CLI Adapter
+  # Deferred: Codex has known platform gaps (no Write/Edit PostToolUse) and a
+  # unique per-turn injection adapter (5.3) that warrants its own sprint focus.
+  # -------------------------------------------------------------------------
+  epic_5:
+    - id: "5.1"
+      title: "Create Codex session_start.py adapter"
+      status: backlog
+      depends_on: ["1.3", "1.4"]
+      effort: M
+
+    - id: "5.2"
+      title: "Create Codex post_tool_capture.py adapter (Bash-only)"
+      status: backlog
+      depends_on: ["1.4", "1.5"]
+      effort: S
+
+    - id: "5.2a"
+      title: "Create Codex error_detection.py and error_pattern_capture.py adapters"
+      status: backlog
+      depends_on: ["1.4", "1.5"]
+      effort: S
+
+    - id: "5.3"
+      title: "Create Codex context_injection.py adapter (UserPromptSubmit)"
+      status: backlog
+      depends_on: ["1.3", "1.4"]
+      effort: M
+
+    - id: "5.4"
+      title: "Create Codex stop.py adapter"
+      status: backlog
+      depends_on: ["1.4", "1.5"]
+      effort: S
+
+    - id: "5.5"
+      title: "Create Codex SKILL.md templates"
+      status: backlog
+      depends_on: ["1.1"]
+      effort: S
+
+  # -------------------------------------------------------------------------
+  # Epic 6: Installer and Config Generation
+  # Blocked: 6.1 requires 2.2 (in sprint_1 but installer generates configs for
+  # all adapters). 6.2 requires adapter template stories (3.5, 4.5, 5.5) which
+  # span multiple sprints. Entire epic deferred until all adapters exist.
+  # -------------------------------------------------------------------------
+  epic_6:
+    - id: "6.1"
+      title: "Implement IDE detection and --ide flag"
+      status: blocked
+      depends_on: ["2.2"]
+      effort: S
+      blocked_by: "6.2 cannot be done until 4.5 and 5.5 exist (backlog)"
+
+    - id: "6.2"
+      title: "Implement config file generation for Gemini, Cursor, and Codex"
+      status: blocked
+      depends_on: ["6.1", "3.5", "4.5", "5.5"]
+      effort: L
+      blocked_by: "4.5 and 5.5 are backlog"
+
+  # -------------------------------------------------------------------------
+  # Epic 7: Integration Testing
+  # Blocked: All stories depend on at least two adapter epics being complete.
+  # Cannot be selected until Cursor and Codex adapters land in Sprint 2/3.
+  # -------------------------------------------------------------------------
+  epic_7:
+    - id: "7.1"
+      title: "Cross-IDE memory sharing integration tests"
+      status: blocked
+      depends_on: ["3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "5.2a"]
+      effort: M
+      blocked_by: "4.1, 4.2, 5.1, 5.2, 5.2a are backlog"
+
+    - id: "7.2"
+      title: "Adapter unit tests with synthetic payloads"
+      status: blocked
+      depends_on: ["3.1", "3.2", "3.4", "4.1", "4.2", "4.4", "5.1", "5.2a", "5.3", "5.4"]
+      effort: M
+      blocked_by: "4.1, 4.2, 4.4, 5.1, 5.3, 5.4, 5.2a are backlog"
+
+    - id: "7.3"
+      title: "Installer config generation tests"
+      status: blocked
+      depends_on: ["6.1", "6.2"]
+      effort: S
+      blocked_by: "6.1 and 6.2 are blocked"
+
+  # -------------------------------------------------------------------------
+  # Epic 8: Phase 2 — Keyword Triggers + Per-Turn Injection (Placeholder)
+  # No stories defined yet. Out of scope for Phase 1.
+  # -------------------------------------------------------------------------
+  epic_8: []

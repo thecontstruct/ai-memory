@@ -142,9 +142,9 @@ Script calls normalize_<ide>_event(raw_input):
 validate_canonical_event(event) — shared validation (schema.py)
          |
          v
-fork_to_background(canonical_event):
+fork_to_background(canonical_event, pipeline_script_path):
   - Sets CLAUDE_SESSION_ID in subprocess env
-  - subprocess.Popen([python, store_async.py], stdin=PIPE, start_new_session=True)
+  - subprocess.Popen([python, pipeline_script_path], stdin=PIPE, start_new_session=True)
   - Writes canonical event JSON to subprocess stdin
          |
          v
@@ -200,7 +200,8 @@ Adapter calls existing retrieval pipeline:
          |     Per-IDE empty-context payloads:
          |     - Gemini: {"hookSpecificOutput": {"additionalContext": ""}}
          |     - Cursor: {"additional_context": ""}
-         |     - Codex:  {"hookSpecificOutput": {"systemMessage": ""}}
+         |     - Codex SessionStart: {"hookSpecificOutput": {"systemMessage": ""}}
+         |     - Codex UserPromptSubmit: {"hookSpecificOutput": {"additionalContext": ""}}
          |
          +-- Success path -->
   - MemorySearch.search() across collections
@@ -211,7 +212,8 @@ Script formats stdout per IDE contract:
   - Claude: plain markdown text to stdout (existing behavior preserved)
   - Gemini: {"hookSpecificOutput": {"additionalContext": "<markdown>"}}
   - Cursor: {"additional_context": "<markdown>"}
-  - Codex:  {"hookSpecificOutput": {"systemMessage": "<markdown>"}}
+  - Codex SessionStart: {"hookSpecificOutput": {"systemMessage": "<markdown>"}}
+  - Codex UserPromptSubmit: {"hookSpecificOutput": {"additionalContext": "<markdown>"}}
          |
          v
 print(json.dumps(output)); sys.stdout.flush(); sys.exit(0)
@@ -260,15 +262,13 @@ IDE-native hook names are mapped to canonical `hook_event_name` values inside ea
 
 | IDE-native hook | Canonical `hook_event_name` |
 |-----------------|----------------------------|
-| Claude `PreToolUse` | `PreToolUse` |
-| Gemini `BeforeTool` | `PreToolUse` |
-| Cursor `preToolUse` | `PreToolUse` |
-| Gemini `AfterTool` | `PostToolUse` |
-| Cursor `postToolUse` | `PostToolUse` |
-| Gemini `BeforeAgent` / Cursor `beforeSubmitPrompt` | `UserPromptSubmit` |
-| Gemini `PreCompress` / Cursor `preCompact` | `PreCompact` |
+| Claude `SessionStart` / Gemini `SessionStart` / Cursor `sessionStart` / Codex `SessionStart` | `SessionStart` |
+| Claude `PreToolUse` / Gemini `BeforeTool` / Cursor `preToolUse` | `PreToolUse` |
+| Claude `PostToolUse` / Gemini `AfterTool` / Cursor `postToolUse` / Codex `PostToolUse` | `PostToolUse` |
+| Claude `UserPromptSubmit` / Gemini `BeforeAgent` / Cursor `beforeSubmitPrompt` / Codex `UserPromptSubmit` | `UserPromptSubmit` |
+| Claude `PreCompact` / Gemini `PreCompress` / Cursor `preCompact` | `PreCompact` |
 | Gemini `SessionEnd` / Cursor `sessionEnd` | `SessionEnd` |
-| Cursor `stop` / Codex `Stop` | `Stop` |
+| Claude `Stop` / Cursor `stop` / Codex `Stop` | `Stop` |
 
 ```python
 # In src/memory/adapters/schema.py (continued)
@@ -303,6 +303,8 @@ def validate_canonical_event(event: dict) -> None:
     for field in optional_int_or_none:
         if field in event and event[field] is not None and not isinstance(event[field], int):
             raise ValueError(f"{field} must be int or None, got {type(event[field]).__name__}")
+    if "is_background_agent" in event and not isinstance(event["is_background_agent"], bool):
+        raise ValueError(f"is_background_agent must be bool, got {type(event['is_background_agent']).__name__}")
 ```
 
 ### Claude Code Normalizer
@@ -323,8 +325,8 @@ def normalize_claude_event(raw: dict, hook_event_name: str) -> dict:
     mcp_name = normalize_mcp_tool_name(tool_name) if tool_name else None
 
     return {
-        "session_id": raw.get("session_id", ""),
-        "cwd": raw.get("cwd", os.getcwd()),
+        "session_id": resolve_session_id(raw),
+        "cwd": resolve_cwd(raw, "claude"),
         "hook_event_name": hook_event_name,
         "tool_name": mcp_name or tool_name,
         "tool_input": raw.get("tool_input"),
@@ -461,7 +463,7 @@ Each IDE adapter resolves `session_id` using this fallback chain:
 | 1 | Native `session_id` field | `session_id` | `session_id` | `session_id` |
 | 2 | Alternate ID field | -- | `conversation_id` | -- |
 | 3 | Transcript path basename | `os.path.splitext(os.path.basename(transcript_path))[0]` | same | same |
-| 4 | Generated fallback | `hashlib.sha256(f"{cwd}:{timestamp}".encode()).hexdigest()[:16]` | same | same |
+| 4 | Generated fallback | `str(uuid.uuid5(uuid.NAMESPACE_URL, f"{cwd}:{timestamp_iso_utc}"))` | same | same |
 
 The resolved `session_id` is set as `os.environ["CLAUDE_SESSION_ID"]` before any pipeline call, maintaining compatibility with existing code that reads this env var (e.g., `store_async.py`, `InjectionSessionState`).
 
@@ -485,12 +487,12 @@ def resolve_session_id(payload: dict) -> str:
     if tp and isinstance(tp, str) and tp.strip():
         return os.path.splitext(os.path.basename(tp))[0]
 
-    # Priority 4: generated from cwd + timestamp
-    import hashlib
+    # Priority 4: UUID seeded from cwd + timestamp (FR-601 / PRD)
+    import uuid
     from datetime import datetime, timezone
     cwd = payload.get("cwd", os.getcwd())
     ts = datetime.now(tz=timezone.utc).isoformat()
-    return hashlib.sha256(f"{cwd}:{ts}".encode()).hexdigest()[:16]
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{cwd}:{ts}"))
 ```
 
 ### CWD Resolution Strategy (FR-602)
@@ -616,8 +618,7 @@ $AI_MEMORY_INSTALL_DIR/
       best_practices_retrieval.py
       langfuse_stop_hook.py
       manual_save_memory.py
-      keyword_trigger_adapter.py
-    gemini/                  # Gemini CLI (Phase 1: 5 scripts; Phase 2+: 7 scripts)
+    gemini/                  # Gemini CLI (12 scripts: 5 Phase 1, 7 Phase 2+)
       session_start.py       after_tool_capture.py
       error_detection.py     error_pattern_capture.py
       pre_compress.py
@@ -626,7 +627,7 @@ $AI_MEMORY_INSTALL_DIR/
       context_injection.py   user_prompt_capture.py
       best_practices_retrieval.py  session_end.py
       keyword_trigger_adapter.py
-    cursor/                  # Cursor IDE (Phase 1: 5 scripts; Phase 2+: 7 scripts)
+    cursor/                  # Cursor IDE (12 scripts: 5 Phase 1, 7 Phase 2+)
       session_start.py       post_tool_capture.py
       error_detection.py     error_pattern_capture.py
       pre_compact.py
@@ -706,7 +707,7 @@ The installer generates these per-project config files:
       { "command": "$ENV \"$PY\" \"$AD/cursor/session_start.py\"", "timeout": 30 }
     ],
     "postToolUse": [
-      { "matcher": "Write|Edit", "command": "$ENV \"$PY\" \"$AD/cursor/post_tool_capture.py\"", "timeout": 5 },
+      { "matcher": "Write|Edit|Read", "command": "$ENV \"$PY\" \"$AD/cursor/post_tool_capture.py\"", "timeout": 5 },
       { "matcher": "Shell", "command": "$ENV \"$PY\" \"$AD/cursor/error_detection.py\"", "timeout": 5 },
       { "matcher": "Shell", "command": "$ENV \"$PY\" \"$AD/cursor/error_pattern_capture.py\"", "timeout": 5 },
       { "matcher": "MCP:.*", "command": "$ENV \"$PY\" \"$AD/cursor/post_tool_capture.py\"", "timeout": 5 }
@@ -738,7 +739,7 @@ The installer generates these per-project config files:
     ],
     "PostToolUse": [
       { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/post_tool_capture.py\"", "timeout": 1 }
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/post_tool_capture.py\"", "timeout": 10 }
       ]}
     ],
     "UserPromptSubmit": [
@@ -922,8 +923,7 @@ src/memory/
       best_practices_retrieval.py    # UserPromptSubmit best practices
       langfuse_stop_hook.py          # Stop tracing
       manual_save_memory.py          # Manual save trigger
-      keyword_trigger_adapter.py     # Keyword triggers (Phase 2)
-    gemini/                          # Gemini CLI adapter (Phase 1: 5 scripts; Phase 2+: 7 scripts)
+    gemini/                          # Gemini CLI adapter (12 scripts: 5 Phase 1, 7 Phase 2+)
       __init__.py
       session_start.py               # SessionStart → retrieval bootstrap
       after_tool_capture.py          # AfterTool(edit/write/create) → code pattern capture
@@ -943,10 +943,10 @@ src/memory/
       session_end.py                 # SessionEnd → agent response capture
       # Phase 2+
       keyword_trigger_adapter.py     # BeforeAgent → keyword triggers
-    cursor/                          # Cursor IDE adapter (Phase 1: 5 scripts; Phase 2+: 7 scripts)
+    cursor/                          # Cursor IDE adapter (12 scripts: 5 Phase 1, 7 Phase 2+)
       __init__.py
       session_start.py               # sessionStart → retrieval bootstrap
-      post_tool_capture.py           # postToolUse(Write/Edit) → code pattern capture
+      post_tool_capture.py           # postToolUse(Write/Edit/Read) → code pattern capture
       error_detection.py             # postToolUse(Shell) → error retrieval
       error_pattern_capture.py       # postToolUse(Shell) → error capture
       pre_compact.py                 # preCompact → session summary
@@ -970,9 +970,12 @@ src/memory/
       error_detection.py             # PostToolUse(Bash) error retrieval (background)
       error_pattern_capture.py       # PostToolUse(Bash) error capture (background)
       context_injection.py           # UserPromptSubmit → per-turn injection
+      # Phase 2+
       user_prompt_capture.py         # UserPromptSubmit → user prompt capture
+      # Phase 2+
       best_practices_retrieval.py    # UserPromptSubmit → best practices retrieval
       stop.py                        # Stop → agent response capture
+      # Phase 2+
       keyword_trigger_adapter.py     # UserPromptSubmit → keyword triggers
       # PLATFORM GAPS (Codex PreToolUse is Bash-only, no PreCompact):
       # - No code-pattern capture (Write/Edit unavailable in Codex PostToolUse); Bash PostToolUse is captured via post_tool_capture.py
@@ -1003,15 +1006,9 @@ src/memory/
           SKILL.md                   # FR-406
         memory-status/
           SKILL.md                   # FR-407
-      .codex/
-        skills/
-          search-memory/
-            SKILL.md                 # FR-406 alias
-          memory-status/
-            SKILL.md                 # FR-407 alias
 ```
 
-The installer must write both paths; `.codex/skills/` is an alias of `.agents/skills/` per FR-406.
+The installer deploys skill files from `templates/codex/` to `.agents/skills/`, then creates `.codex/skills/` as a symlink (or copy on non-symlink OSes) pointing to `.agents/skills/` per FR-406. No separate `.codex/` template tree is maintained.
 
 **Migration from `.claude/hooks/scripts/`:** The existing 18 hook scripts move from
 `.claude/hooks/scripts/*.py` to `src/memory/adapters/claude/*.py` and
@@ -1048,28 +1045,27 @@ removed after migration.
 
 | Hook Type | PRD Requirement | Budget Allocation |
 |-----------|----------------|-------------------|
-| SessionStart (retrieval) | p95 < 3000ms (NFR-101) | est. ~50ms adapter overhead + ~2950ms for Qdrant search + formatting |
-| PostToolUse (capture) | p95 < 500ms (NFR-102) | est. ~30ms adapter overhead + fork; background process unconstrained |
+| SessionStart (retrieval) | p95 < 3000ms, p99 < 5000ms (NFR-101) | est. ~50ms adapter overhead + ~2950ms for Qdrant search + formatting |
+| PostToolUse (capture) | p95 < 500ms, p99 < 1000ms (NFR-102) | est. ~30ms adapter overhead + fork; background process unconstrained |
 | UserPromptSubmit (injection) | < 2000ms (NFR-104) | est. ~50ms adapter overhead + ~1950ms for search + inject |
 | Stop (session summary) | No strict budget (end of session) | Synchronous, up to 30s |
 
-**How the budget is met:** Measured adapter-side work is bounded by `json.loads()` on stdin, field mapping, `json.dumps()` on stdout (or `subprocess.Popen` for capture); retrieval paths additionally spend budget in Qdrant search, embedding, and security scan. **Acceptance (pass/fail):** For each of Gemini, Cursor, and Codex, for each hook category in the table (SessionStart retrieval, PostToolUse capture, UserPromptSubmit injection), run that adapter’s hook entry point **20 times** with identical stdin fixtures against a local Qdrant instance seeded with **≥100** points; record wall-clock **from stdin closed to process exit** (capture hooks) or **from stdin closed to stdout flush** (retrieval/injection hooks) for every run; compute the **p95** across those 20 samples; **fail** if p95 ≥ the PRD budget in the table row for that hook category for any IDE, **pass** otherwise. Persist the 20 timings and computed p95 per IDE/hook in the CI log or a committed benchmark artifact so the result is auditable.
+**How the budget is met:** Measured adapter-side work is bounded by `json.loads()` on stdin, field mapping, `json.dumps()` on stdout (or `subprocess.Popen` for capture); retrieval paths additionally spend budget in Qdrant search and embedding. **Acceptance (pass/fail):** Follow the PRD’s authoritative procedures—do not duplicate them here. **SessionStart** hooks use **NFR-101** (**10** runs; **p95 < 3000ms**; **p99 < 5000ms**). **PostToolUse** hooks use **NFR-102** (**50** runs; **p95 < 500ms**; **p99 < 1000ms**). **Codex** `UserPromptSubmit` and **Phase 2** per-turn adapters use the **BP-01** default procedure (**20** runs; **p95** and **p99** against the **NFR-104** budget of **2000ms**). Persist timings and percentile results per those procedures in the CI log or a committed benchmark artifact.
 
 ### Fork-to-Background Pattern for Capture Hooks
 
 All capture adapters (PostToolUse/AfterTool/postToolUse) use the same fork pattern as `post_tool_capture.py`:
 
 ```python
-def fork_to_background(canonical_event: dict) -> None:
+def fork_to_background(canonical_event: dict, pipeline_script_path: Path) -> None:
     """Fork storage to background. Adapter exits immediately after this call."""
-    store_async_script = Path(INSTALL_DIR) / "adapters" / "pipeline" / "store_async.py"
     subprocess_env = os.environ.copy()
     sid = canonical_event.get("session_id", "")
     if sid:
         subprocess_env["CLAUDE_SESSION_ID"] = sid
 
     process = subprocess.Popen(
-        [sys.executable, str(store_async_script)],
+        [sys.executable, str(pipeline_script_path)],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -1081,7 +1077,7 @@ def fork_to_background(canonical_event: dict) -> None:
         process.stdin.close()
 ```
 
-**Key detail:** The adapters fork to the EXISTING `store_async.py` script, not a new one. This ensures the same pipeline, security scan, and storage logic is used regardless of IDE. `validate_canonical_event` raises `ValueError` before `store_async.py` receives any event whose optional fields violate the type constraints declared in the schema above; `store_async.py` therefore only processes events where `tool_input` is `dict | None`, `tool_response` is `dict | str | None`, and `tool_name` and `transcript_path` are `str | None`.
+**Key detail:** The caller passes the target pipeline script path (e.g. `store_async.py`, `error_store_async.py`); adapters do not hardcode a single script. This keeps the same pipeline, security scan, and storage logic per script regardless of IDE. `validate_canonical_event` raises `ValueError` before the pipeline receives any event whose optional fields violate the type constraints declared in the schema above; scripts such as `store_async.py` therefore only process events where `tool_input` is `dict | None`, `tool_response` is `dict | str | None`, and `tool_name` and `transcript_path` are `str | None`.
 
 ### Gemini JSON-Only stdout Constraint (FR-603)
 
@@ -1159,7 +1155,7 @@ It is not confirmed whether Codex CLI fires `PostToolUse` for MCP tool invocatio
 | IDE hook protocol changes in future releases | Medium | Adapter scripts break for that IDE | Each adapter is isolated; a protocol change affects only one IDE's adapter. Adapters log structured warnings for unexpected payload shapes, enabling fast diagnosis. |
 | `store_async.py` rejects canonical events with unfamiliar fields | Low | Memories not stored for non-Claude IDEs | `store_async.py` uses `dict.get()` with defaults throughout. `ide_source` is **not** in the hardcoded payload today (see FR-102); FEATURE-001 must add it explicitly. Test with a synthetic event whose `ide_source` is not "claude" and assert the stored Qdrant point payload contains the expected `ide_source` value. |
 | Gemini/Cursor/Codex stdin schema differs from documentation | Medium | Adapter fails to parse payload | Each adapter's `main()` has a try/except catching `json.JSONDecodeError` and `KeyError`, returning exit 0 with valid empty output. Graceful degradation means the IDE session continues unaffected. |
-| Performance regression from adapter overhead | Low | Hook exceeds latency budget | **Pass:** the §7 Adapter Overhead Budget procedure runs in CI (or release gate) for Gemini, Cursor, and Codex; every p95 recorded in the artifact is strictly below the table’s PRD budget for its hook category. **Fail:** any missing IDE, hook category, or timing row, or any p95 ≥ the budget. |
+| Performance regression from adapter overhead | Low | Hook exceeds latency budget | **Pass:** the §7 Phase 1 acceptance procedure runs in CI (or release gate) for Gemini, Cursor, and Codex and every p95 and p99 in the artifact is below the applicable table budget for each executed hook; when Phase 2 per-turn adapters ship, the §7 Phase 2 clause is added to the same artifact and passes. **Fail:** any missing required timing row for a hook in scope, or any p95 ≥ the budget for that hook. |
 | Installer writes conflicting config when IDE already has hooks | Medium | User's existing hooks overwritten | FR-504: skip if already installed. FR-505: `--force` overwrites. Default: JSON-level merge preserving unrelated keys; aborts on unparseable files. |
 
 ---
@@ -1172,13 +1168,12 @@ Phase 2 re-enables the three keyword-oriented trigger scripts bundled with the p
 
 ### FR-702 – FR-704: Per-IDE trigger adapters
 
-Add `keyword_trigger_adapter.py` under each of `src/memory/adapters/claude/`, `src/memory/adapters/gemini/`, `src/memory/adapters/cursor/`, and `src/memory/adapters/codex/`. Each module is a thin entry point: read stdin, normalize to the canonical event shape (including `user_prompt` and `cwd` for the trigger pipeline’s `{"prompt": ..., "cwd": ...}` contract), spawn the shared trigger logic, and format stdout per that IDE’s hook rules.
+Add `keyword_trigger_adapter.py` under each of `src/memory/adapters/gemini/`, `src/memory/adapters/cursor/`, and `src/memory/adapters/codex/` (not under `claude/`). Claude Code uses FR-701 only: rename the three `.disabled` trigger scripts and set `enabled: true` in `TRIGGER_CONFIG` — no new `keyword_trigger_adapter.py`. Each non-Claude module is a thin entry point: read stdin, normalize to the canonical event shape (including `user_prompt` and `cwd` for the trigger pipeline’s `{"prompt": ..., "cwd": ...}` contract), spawn the shared trigger logic, and format stdout per that IDE’s hook rules.
 
 **Hook-to-adapter mapping**
 
 | IDE | Native hook | Entry script |
 |-----|-------------|--------------|
-| Claude Code | (per `TRIGGER_CONFIG` / UserPromptSubmit wiring in settings) | `adapters/claude/keyword_trigger_adapter.py` |
 | Gemini CLI | `BeforeAgent` | `adapters/gemini/keyword_trigger_adapter.py` |
 | Cursor IDE | `beforeSubmitPrompt` | `adapters/cursor/keyword_trigger_adapter.py` |
 | Codex CLI | `UserPromptSubmit` | `adapters/codex/keyword_trigger_adapter.py` |
@@ -1199,15 +1194,15 @@ Phase 2 extends the same generated files described in §5. The installer appends
 
   `{ "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/keyword_trigger_adapter.py\"", "timeout": 2 }`
 
-- **Claude Code** — register `keyword_trigger_adapter.py` in `.claude/settings.json` on the hook events gated by `TRIGGER_CONFIG`, consistent with the UserPromptSubmit / prompt-submission path used for the trigger pipeline.
-
 **NFR-104 timing:** Each internal trigger subprocess uses a **1500ms** wall-clock limit; the adapter as a whole must finish within **2000ms** so the IDE hook budget in §7 is not exceeded.
 
 ### Mechanically falsifiable acceptance criteria
 
-For each `keyword_trigger_adapter.py`:
+Applies only to `src/memory/adapters/gemini/keyword_trigger_adapter.py`, `src/memory/adapters/cursor/keyword_trigger_adapter.py`, and `src/memory/adapters/codex/keyword_trigger_adapter.py`. Claude Code keyword triggers are validated under FR-701 (enabled scripts + `TRIGGER_CONFIG`), not this adapter module.
 
-1. **Keyword match:** Stdin is the repository’s test fixture that includes a keyword enabled in test `TRIGGER_CONFIG`. **Pass:** exit status **0**; wall time from process start to stdout stream closed ≤ **2000ms**; stdout byte length **> 0** after read; `json.loads(stdout.decode("utf-8"))` raises **no** exception. **Fail:** any other exit status, timeout, zero-length stdout, non-UTF-8 stdout, or `JSONDecodeError`.
-2. **No match:** Stdin is the repository’s test fixture with **no** matching keyword. **Pass:** exit status **0**; wall time from process start to stdout stream closed ≤ **200ms**; stdout bytes **exactly equal** the `NO_MATCH_STDOUT` bytes constant defined in that IDE’s `keyword_trigger_adapter.py` (byte-for-byte). **Fail:** any other exit status, timeout, or stdout mismatch.
+For each of those three files:
 
-When Phase 2 is enabled, installer script counts under §5 increase by **one** adapter file per IDE (`keyword_trigger_adapter.py`) relative to the FEATURE-001 trees documented there.
+1. **Keyword match:** Stdin is the exact byte contents of the committed file referenced by `MATCH_KEYWORD_FIXTURE` in that adapter’s test module; the test asserts the file exists before spawning the adapter. The fixture text contains a keyword enabled in the test `TRIGGER_CONFIG`. **Pass:** exit status **0**; wall time from process start to stdout stream closed ≤ **2000ms**; stdout byte length **> 0**; `json.loads(stdout.decode("utf-8"))` succeeds (no `JSONDecodeError`). **Fail:** any other exit status, wall time **>** **2000ms**, zero-length stdout, undecodable UTF-8 stdout, or `JSONDecodeError`.
+2. **No match:** Stdin is the exact byte contents of the committed file referenced by `NO_MATCH_KEYWORD_FIXTURE` in that adapter’s test module; the test asserts the file exists before spawning the adapter. **Pass:** exit status **0**; wall time from process start to stdout stream closed ≤ **200ms**; stdout bytes **exactly equal** the `NO_MATCH_STDOUT` bytes constant in that file (byte-for-byte). **Fail:** any other exit status, wall time **>** **200ms**, or stdout mismatch.
+
+**Install tree (pass/fail):** After Phase 2 install, **pass** only if those three paths exist on disk and `src/memory/adapters/claude/keyword_trigger_adapter.py` is absent; **fail** if any of the three is missing or the Claude adapter path exists.

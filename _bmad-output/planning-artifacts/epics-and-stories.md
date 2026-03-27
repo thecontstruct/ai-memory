@@ -48,7 +48,10 @@ Create `src/memory/adapters/__init__.py` and `src/memory/adapters/schema.py` con
 - [ ] `validate_canonical_event()` raises `ValueError` when any of `session_id`, `cwd`, `hook_event_name`, or `ide_source` is missing or not a `str`
 - [ ] `validate_canonical_event()` raises `ValueError` when `ide_source` is not in `VALID_IDE_SOURCES`
 - [ ] `validate_canonical_event()` raises `ValueError` when `hook_event_name` is not in `VALID_HOOK_EVENTS`
-- [ ] Optional fields (`tool_name`, `transcript_path`, `user_prompt`, `trigger`) pass validation when `None` or a `str`; raise `ValueError` for any other type
+- [ ] Optional fields (`tool_name`, `transcript_path`, `trigger`) pass validation when `None` or a `str`; raise `ValueError` for any other type
+- [ ] `tool_input` passes validation when `None` or `dict`; raises `ValueError` otherwise
+- [ ] For `hook_event_name == "UserPromptSubmit"`, `user_prompt` must be a non-empty `str` — `validate_canonical_event()` raises `ValueError` if it is `None`, empty, or non-`str`; for every other `hook_event_name`, `user_prompt` must be `None` — raises `ValueError` if non-`None`
+- [ ] `is_background_agent` passes validation when `bool`; raises `ValueError` for non-`bool` types
 - [ ] `tool_response` passes validation when `None`, `str`, or `dict`; raises `ValueError` otherwise
 - [ ] `context_usage_percent` passes when `None` or `float`; raises `ValueError` for `int` or other types
 - [ ] `context_tokens` and `context_window_size` pass when `None` or `int`; raise `ValueError` otherwise
@@ -57,7 +60,6 @@ Create `src/memory/adapters/__init__.py` and `src/memory/adapters/schema.py` con
 **Implementation Notes:**
 - Module path: `src/memory/adapters/schema.py`
 - Canonical event is a plain `dict`, not a Pydantic model — matches the existing `post_tool_capture.py` pattern
-- `is_background_agent` is required for Cursor adapter logic but is not a required canonical field for validation (it defaults to `False`)
 
 ---
 
@@ -126,7 +128,7 @@ Add `resolve_session_id()` and `resolve_cwd()` to `schema.py`. These functions i
 **Estimated effort:** S
 
 **Description:**
-Add `normalize_claude_event()` and `fork_to_background()` to `schema.py`. `normalize_claude_event()` is the Claude Code-specific normalizer that maps native Claude stdin fields to the canonical event dict. `fork_to_background()` encapsulates the `subprocess.Popen(start_new_session=True)` pattern used by all capture adapters.
+Add `normalize_claude_event()` and `fork_to_background()` to `schema.py`. `normalize_claude_event()` is the Claude Code-specific normalizer that maps native Claude stdin fields to the canonical event dict. `fork_to_background()` encapsulates the `subprocess.Popen(start_new_session=True)` pattern used by capture adapters to spawn a specified pipeline script in the background (e.g. `store_async.py` for most adapters; `error_detection.py`/`error_pattern_capture.py` for Codex Bash-only capture — see Story 5.2).
 
 **Acceptance Criteria:**
 - [ ] `normalize_claude_event(raw, hook_event_name)` returns a canonical dict with all required fields populated
@@ -161,11 +163,11 @@ Move the four background pipeline scripts (`store_async.py`, `error_store_async.
 - [ ] `store_async.py` includes `"ide_source": hook_input.get("ide_source", "claude")` in the chunk payload dict
 - [ ] Unit test: after `store_async.py` processes a canonical event with `ide_source="gemini"`, the Qdrant point payload contains `ide_source == "gemini"` (use mocked Qdrant client)
 - [ ] Unit test: after processing a canonical event with `ide_source="claude"`, the stored point contains `ide_source == "claude"`
-- [ ] Existing test suite for `store_async.py` still passes (no regressions)
+- [ ] `pytest` run scoped to `store_async.py` tests exits 0 with zero failures
 
 **Implementation Notes:**
 - This is a file move plus a one-line change per the architecture's reference implementation in §3
-- The original `.claude/hooks/scripts/` files are removed after the move — they will be replaced by `adapters/claude/` symlinks or path updates in Story 2.1
+- The original `.claude/hooks/scripts/` files are removed after the move — their `.claude/settings.json` command paths will be updated to point to `adapters/claude/` in Story 2.1
 - `store_async.py` reads `hook_input` as a dict from stdin — `ide_source` is already in the canonical event that all adapters produce after Story 1.4
 
 ---
@@ -217,7 +219,7 @@ Update every hook command path in `.claude/settings.json` (and the installer tem
 - [ ] All hook command strings in `.claude/settings.json` reference `$AI_MEMORY_INSTALL_DIR/adapters/claude/` paths
 - [ ] No command string references `.claude/hooks/scripts/`
 - [ ] The installer template that generates `.claude/settings.json` is updated to the new paths
-- [ ] A Claude Code session started with the updated config fires hooks successfully (verified via existing integration test or manual smoke test)
+- [ ] `pytest` invocation of the Claude Code hook path / migration integration suite (SC-07) exits 0 with zero failed tests after updating command paths
 - [ ] `.claude/settings.json` JSON schema is unchanged (NFR-301)
 
 **Implementation Notes:**
@@ -251,7 +253,7 @@ Create `src/memory/adapters/gemini/session_start.py`. The script reads a Gemini 
 - [ ] Given Qdrant unreachable, adapter exits 0 with empty `additionalContext` and no exception on stderr
 - [ ] Given malformed stdin JSON, adapter exits 0 with valid empty JSON output
 - [ ] `cwd` is resolved using `resolve_cwd()` fallback chain; test covers payload where `cwd` is absent
-- [ ] Adapter completes within 3000ms at p95 (tested with 10 sequential invocations per NFR-101)
+- [ ] Per NFR-101 procedure: 10 sequential invocations with fixed synthetic fixtures against Qdrant seeded with ≥100 points; wall-clock from stdin closed to stdout flush; p95 < 3000ms and p99 < 5000ms
 - [ ] Nothing other than valid JSON is written to stdout (logging goes to stderr only)
 
 **Implementation Notes:**
@@ -266,7 +268,7 @@ Create `src/memory/adapters/gemini/session_start.py`. The script reads a Gemini 
 **Epic:** Gemini CLI Adapter
 **Traces to:** FR-202, FR-208, FR-601, FR-602
 **Architecture:** §2 Data Flow Capture Path, §2 MCP Tool Name Normalization
-**Depends on:** Story 1.2, Story 1.4, Story 1.5
+**Depends on:** Story 1.2, Story 1.4, Story 1.5, Story 3.1
 **Estimated effort:** M
 
 **Description:**
@@ -280,6 +282,7 @@ Create `src/memory/adapters/gemini/after_tool_capture.py`. The script reads a Ge
 - [ ] Given malformed stdin, adapter exits 0 without raising an unhandled exception
 - [ ] Adapter emits no output to stdout (exit 0, no JSON required for AfterTool)
 - [ ] Tool name mapping is applied: `"write_file"` → `"Write"`, `"edit_file"` → `"Edit"`, `"create_file"` → `"Write"`
+- [ ] Per NFR-102 procedure: 50 sequential invocations with fixed synthetic fixtures against Qdrant seeded with ≥100 points; wall-clock from stdin closed to process exit; p95 < 500ms and p99 < 1000ms
 
 **Implementation Notes:**
 - `normalize_gemini_event()` must map `tool_response.llmContent` to `tool_response` in the canonical event
@@ -293,7 +296,7 @@ Create `src/memory/adapters/gemini/after_tool_capture.py`. The script reads a Ge
 **Epic:** Gemini CLI Adapter
 **Traces to:** FR-202, FR-601, FR-602
 **Architecture:** §6 Directory Structure (gemini adapter scripts)
-**Depends on:** Story 1.4, Story 1.5
+**Depends on:** Story 1.4, Story 1.5, Story 3.1
 **Estimated effort:** S
 
 **Description:**
@@ -316,7 +319,7 @@ Create `src/memory/adapters/gemini/error_detection.py` and `src/memory/adapters/
 **Epic:** Gemini CLI Adapter
 **Traces to:** FR-203
 **Architecture:** §2 Data Flow Capture Path
-**Depends on:** Story 1.4, Story 1.5
+**Depends on:** Story 1.4, Story 1.5, Story 3.1
 **Estimated effort:** S
 
 **Description:**
@@ -386,7 +389,7 @@ Create `src/memory/adapters/cursor/__init__.py` and `src/memory/adapters/cursor/
 - [ ] Given an empty Qdrant index, adapter exits 0 with `{"additional_context": ""}`
 - [ ] `session_id` resolves from `session_id` → `conversation_id` → `transcript_path` → generated fallback per FR-601
 - [ ] No content other than valid JSON is written to stdout
-- [ ] Adapter completes within 3000ms at p95 (NFR-101)
+- [ ] Per NFR-101 procedure: 10 sequential invocations with fixed synthetic `sessionStart` stdin fixtures against Qdrant seeded with ≥100 points; wall-clock from stdin closed to stdout flush; p95 < 3000ms and p99 < 5000ms
 
 **Implementation Notes:**
 - Add `normalize_cursor_event()` to `schema.py` mapping Cursor-native fields including `conversation_id`, `workspace_roots`, `is_background_agent`, and `cursor_version`
@@ -400,20 +403,22 @@ Create `src/memory/adapters/cursor/__init__.py` and `src/memory/adapters/cursor/
 **Epic:** Cursor IDE Adapter
 **Traces to:** FR-302, FR-308, FR-601, FR-602
 **Architecture:** §2 Data Flow Capture Path, §2 MCP Tool Name Normalization
-**Depends on:** Story 1.2, Story 1.4, Story 1.5
+**Depends on:** Story 1.2, Story 1.4, Story 1.5, Story 4.1
 **Estimated effort:** M
 
 **Description:**
-Create `src/memory/adapters/cursor/post_tool_capture.py`. The script reads a Cursor `postToolUse` payload, maps Cursor tool names to canonical names (`Write` → `Write`, `Edit` → `Edit`, `Shell` → `Bash`), passes MCP tool names through `normalize_mcp_tool_name()`, forks to background for supported tools, and exits 0.
+Create `src/memory/adapters/cursor/post_tool_capture.py`. The script reads a Cursor `postToolUse` payload, maps Cursor tool names to canonical names (`Write` → `Write`, `Read` → `Read`, `Edit` → `Edit`, `Shell` → `Bash`), passes MCP tool names through `normalize_mcp_tool_name()`, forks to background for supported tools, and exits 0.
 
 **Acceptance Criteria:**
 - [ ] Given `tool_name: "Write"`, adapter forks to background and exits 0 within 500ms
 - [ ] Given `tool_name: "Edit"`, adapter forks to background and exits 0 within 500ms
+- [ ] Given `tool_name: "Read"`, adapter forks to background and exits 0 within 500ms
 - [ ] Given `tool_name: "MCP:github_search"`, stored Qdrant point has `tool_name == "mcp:unknown:github_search"`
 - [ ] Given `tool_name: "MCP:database_query"`, stored point has `tool_name == "mcp:unknown:database_query"`
 - [ ] Given an unsupported `tool_name`, adapter exits 0 without forking (no background process spawned)
 - [ ] Script path resolution uses `AI_MEMORY_INSTALL_DIR` env var, not relative paths or symlinks
 - [ ] Given malformed stdin, adapter exits 0 without raising an unhandled exception
+- [ ] Per NFR-102 procedure: 50 sequential invocations with fixed synthetic fixtures against Qdrant seeded with ≥100 points; wall-clock from stdin closed to process exit; p95 < 500ms and p99 < 1000ms
 
 **Implementation Notes:**
 - `normalize_cursor_event()` maps `tool_output` to `tool_response` in the canonical dict
@@ -427,7 +432,7 @@ Create `src/memory/adapters/cursor/post_tool_capture.py`. The script reads a Cur
 **Epic:** Cursor IDE Adapter
 **Traces to:** FR-302
 **Architecture:** §6 Directory Structure (cursor adapter scripts)
-**Depends on:** Story 1.4, Story 1.5
+**Depends on:** Story 1.4, Story 1.5, Story 4.1
 **Estimated effort:** S
 
 **Description:**
@@ -450,7 +455,7 @@ Create `src/memory/adapters/cursor/error_detection.py` and `src/memory/adapters/
 **Epic:** Cursor IDE Adapter
 **Traces to:** FR-303
 **Architecture:** §2 Data Flow Capture Path
-**Depends on:** Story 1.4, Story 1.5
+**Depends on:** Story 1.4, Story 1.5, Story 4.1
 **Estimated effort:** S
 
 **Description:**
@@ -517,7 +522,7 @@ Create `src/memory/adapters/codex/__init__.py` and `src/memory/adapters/codex/se
 - [ ] Given malformed stdin, adapter exits 0 with valid empty JSON output
 - [ ] `session_id` resolves via FR-601 fallback chain (Codex has `session_id` and `turn_id` but no `conversation_id`)
 - [ ] Nothing other than valid JSON is written to stdout
-- [ ] Adapter completes within 3000ms at p95 (NFR-101)
+- [ ] Per NFR-101 procedure: 10 sequential invocations with fixed synthetic Codex `SessionStart` stdin fixtures against Qdrant seeded with ≥100 points; wall-clock from stdin closed to stdout flush; p95 < 3000ms and p99 < 5000ms
 
 **Implementation Notes:**
 - Add `normalize_codex_event()` to `schema.py` mapping Codex-native fields (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`, `turn_id`) to the canonical dict with `ide_source="codex"`
@@ -541,6 +546,7 @@ Create `src/memory/adapters/codex/post_tool_capture.py`. This adapter handles Co
 - [ ] Given a `tool_name` not matching any known Codex native tool, adapter logs `{"event": "unrecognized_tool_name", "tool_name": "<value>"}` to stderr and exits 0 without forking (FR-408)
 - [ ] Given malformed stdin, adapter exits 0 without unhandled exception
 - [ ] Adapter produces no stdout output
+- [ ] Per NFR-102 procedure: 50 sequential invocations with fixed synthetic fixtures against Qdrant seeded with ≥100 points; wall-clock from stdin closed to process exit; p95 < 500ms and p99 < 1000ms
 
 **Implementation Notes:**
 - Known platform gap: Codex `PostToolUse` is Bash-only per FR-402; Write/Edit events do not fire PostToolUse hooks in Codex CLI
@@ -549,12 +555,35 @@ Create `src/memory/adapters/codex/post_tool_capture.py`. This adapter handles Co
 
 ---
 
+### Story 5.2a: Create Codex `error_detection.py` and `error_pattern_capture.py` adapters
+
+**Epic:** Codex CLI Adapter
+**Traces to:** FR-402, FR-601, FR-602
+**Architecture:** §6 Directory Structure (codex adapter scripts)
+**Depends on:** Story 1.4, Story 1.5
+**Estimated effort:** S
+
+**Description:**
+Create `src/memory/adapters/codex/error_detection.py` and `src/memory/adapters/codex/error_pattern_capture.py`. These handle Codex `PostToolUse` events with `tool_name: "Bash"` (the Codex Bash path), mirroring the Gemini and Cursor equivalents. Both normalize through `normalize_codex_event()` and fork to the appropriate pipeline script.
+
+**Acceptance Criteria:**
+- [ ] Given a Codex `PostToolUse` payload with `tool_name: "Bash"` and error-pattern output, `error_detection.py` forks to `error_store_async.py` and exits 0 within 500ms
+- [ ] `error_pattern_capture.py` forks to the error pattern pipeline and exits 0 within 500ms
+- [ ] Both adapters exit 0 on malformed stdin without unhandled exceptions
+- [ ] Both adapters produce no stdout output
+
+**Implementation Notes:**
+- These adapters are registered under the Codex `PostToolUse` Bash matcher in `.codex/hooks.json` per the architecture — Story 6.2 handles config generation
+- Both scripts reuse `normalize_codex_event()` from `schema.py` — no new normalizer needed
+
+---
+
 ### Story 5.3: Create Codex `context_injection.py` adapter (UserPromptSubmit)
 
 **Epic:** Codex CLI Adapter
 **Traces to:** FR-404
 **Architecture:** §2 Data Flow Retrieval Path
-**Depends on:** Story 1.3, Story 1.4
+**Depends on:** Story 1.3, Story 1.4, Story 5.1
 **Estimated effort:** M
 
 **Description:**
@@ -579,7 +608,7 @@ Create `src/memory/adapters/codex/context_injection.py`. This adapter handles Co
 **Epic:** Codex CLI Adapter
 **Traces to:** FR-405
 **Architecture:** §2 Data Flow Capture Path
-**Depends on:** Story 1.4, Story 1.5
+**Depends on:** Story 1.4, Story 1.5, Story 5.1
 **Estimated effort:** S
 
 **Description:**
@@ -657,7 +686,7 @@ Add IDE detection functions (`detect_gemini_cli()`, `detect_cursor_ide()`, `dete
 ### Story 6.2: Implement config file generation for Gemini, Cursor, and Codex
 
 **Epic:** Installer and Config Generation
-**Traces to:** FR-503, FR-504, FR-505, FR-506, FR-507, FR-508
+**Traces to:** FR-503, FR-504, FR-505, FR-506, FR-507, FR-508, FR-304
 **Architecture:** §5 IDE Config File Generation, §5 Skill / Command Deployment
 **Depends on:** Story 6.1, Story 3.5, Story 4.5, Story 5.5
 **Estimated effort:** L
@@ -666,8 +695,9 @@ Add IDE detection functions (`detect_gemini_cli()`, `detect_cursor_ide()`, `dete
 Implement `write_gemini_config()`, `write_cursor_config()`, and `write_codex_config()` functions in the installer. Each function generates the appropriate IDE config file with all required hook entries and env vars, deploys skill/command templates to project directories, and enforces idempotency and merge behavior.
 
 **Acceptance Criteria:**
-- [ ] After `add-project` with Gemini detected, `.gemini/settings.json` is valid JSON containing all 8 required env vars in the `env` block and hook entries for `SessionStart`, `AfterTool` (both matchers), and `PreCompress`
-- [ ] After `add-project` with Cursor detected, `.cursor/hooks.json` is valid JSON with `"version": 1` and hook entries for `sessionStart`, `postToolUse` (both matchers including `MCP:.*`), and `preCompact`; all command strings include inline env var assignments for all 8 required vars
+- [ ] After `add-project` with Gemini detected, `.gemini/settings.json` is valid JSON containing all 8 required env vars in the `env` block and hook entries for `SessionStart`, `AfterTool` (3 matcher groups: `edit_file|write_file|create_file`, `run_shell_command` with sequential `error_detection.py` and `error_pattern_capture.py`, and `mcp_.*`), and `PreCompress`
+- [ ] After `add-project` with Cursor detected, `.cursor/hooks.json` is valid JSON with `"version": 1` and hook entries for `sessionStart`, `postToolUse` (4 entries: `Write|Edit` capture, `Shell` → `error_detection.py`, `Shell` → `error_pattern_capture.py`, and `MCP:.*` capture), and `preCompact`; all command strings include inline env var assignments for all 8 required vars
+- [ ] No hook entry in `.cursor/hooks.json` contains `failClosed: true` (FR-304)
 - [ ] After `add-project` with Codex detected, `.codex/hooks.json` is valid JSON with hook entries for `SessionStart`, `PostToolUse` (Bash matcher), `UserPromptSubmit`, and `Stop`; all command strings include inline env var assignments for all 8 required vars
 - [ ] After `add-project` with Gemini detected, `.gemini/commands/search-memory.toml`, `memory-status.toml`, and `save-memory.toml` exist and are valid TOML (FR-506)
 - [ ] After `add-project` with Cursor detected, `.cursor/skills/search-memory/SKILL.md`, `memory-status/SKILL.md`, and `save-memory/SKILL.md` exist and pass YAML frontmatter validation (FR-507)
@@ -675,7 +705,7 @@ Implement `write_gemini_config()`, `write_cursor_config()`, and `write_codex_con
 - [ ] Running `add-project` twice on the same project does not modify configs already containing `AI_MEMORY_INSTALL_DIR` (FR-504); file mtime is unchanged on second run
 - [ ] `add-project --force` overwrites existing IDE config files (FR-505)
 - [ ] No command string contains shell interpolation of user-supplied input (NFR-201, NFR-203)
-- [ ] If an existing config file is valid JSON but lacks ai-memory keys, the installer merges ai-memory keys into the existing object while preserving unrelated keys
+- [ ] Merge into existing config: For `.gemini/settings.json`, `.cursor/hooks.json`, and `.codex/hooks.json`, given a pre-install file that is valid JSON, contains a sentinel key `__preserved__: true`, and lacks any hook/command entry referencing `AI_MEMORY_INSTALL_DIR`, after `add-project` the parsed JSON still has `__preserved__ == true` and includes new ai-memory hook or `env` entries (strings containing `AI_MEMORY_INSTALL_DIR` appear in the merged artifact)
 
 **Implementation Notes:**
 - Codex and Cursor configs require inline env var assignments per the architecture's note on missing `env` block support
@@ -695,7 +725,7 @@ Cross-IDE memory sharing tests validate that the same Qdrant index serves all fo
 **Epic:** Integration Testing
 **Traces to:** SC-04, SC-05, SC-06, FR-101, FR-102
 **Architecture:** §2 System Design (unified Qdrant)
-**Depends on:** Story 3.1, Story 3.2, Story 4.1, Story 4.2, Story 5.1, Story 5.2
+**Depends on:** Story 3.1, Story 3.2, Story 4.1, Story 4.2, Story 5.1, Story 5.2, Story 5.2a
 **Estimated effort:** M
 
 **Description:**
@@ -721,16 +751,19 @@ Write integration tests that verify memories written by one IDE's capture adapte
 **Epic:** Integration Testing
 **Traces to:** NFR-401, FR-101, FR-603
 **Architecture:** §7 Performance and Scale
-**Depends on:** Story 3.1, Story 3.2, Story 3.4, Story 4.1, Story 4.2, Story 4.4, Story 5.1, Story 5.3, Story 5.4
+**Depends on:** Story 3.1, Story 3.2, Story 3.4, Story 4.1, Story 4.2, Story 4.4, Story 5.1, Story 5.2a, Story 5.3, Story 5.4
 **Estimated effort:** M
 
 **Description:**
-Write unit tests for each new adapter covering: valid payload, malformed JSON payload, missing required fields, Qdrant unavailable, and empty results. Also verify stdout-only JSON output (no mixed stdout/stderr content) across 10 synthetic invocations per adapter.
+Write unit tests for each new adapter covering: valid payload, malformed JSON payload, missing required fields, Qdrant unavailable, and empty results. Also verify stdout JSON validity across 100 synthetic invocations per session_start adapter (FR-603).
 
 **Acceptance Criteria:**
 - [ ] Each session_start adapter (Gemini, Cursor, Codex) has tests for all 5 cases (valid, malformed, missing fields, Qdrant unavailable, empty results)
 - [ ] Each capture adapter (Gemini after_tool, Cursor post_tool, Codex post_tool) has tests for: valid payload → fork spawned, malformed payload → exit 0 no exception, unsupported tool_name → exit 0 no fork
-- [ ] For each session_start adapter, 10 synthetic payloads all produce valid JSON on stdout (FR-603)
+- [ ] Each error adapter (Gemini `error_detection` / `error_pattern_capture`, Cursor `error_detection` / `error_pattern_capture`, Codex `error_detection` / `error_pattern_capture`) has tests for: valid error-pattern payload → fork spawned, malformed payload → exit 0 no exception, non-error payload → exit 0 no fork
+- [ ] Each pre_compress / pre_compact adapter (Gemini `pre_compress`, Cursor `pre_compact`, Codex `pre_compact`) has tests for: valid payload → pipeline invoked, malformed payload → exit 0 no exception, Qdrant unavailable → exit 0 no exception
+- [ ] Codex `context_injection` adapter has tests for all 5 cases (valid, malformed, missing fields, Qdrant unavailable, empty results), matching the session_start adapter breakdown
+- [ ] For each Phase 1 adapter created in Epics 3–5, 100 synthetic payloads satisfy FR-603: for each session_start adapter (Gemini, Cursor, Codex), stdout is such that `json.loads(captured_stdout)` succeeds and no logging output appears on stdout; adapters that emit hook JSON on stdout (`context_injection`) meet the same JSON-on-stdout rule; adapters that must emit no stdout have empty stdout
 - [ ] Tests mock the Qdrant client to avoid requiring a live Qdrant instance
 - [ ] All tests pass with `pytest`
 
@@ -787,5 +820,6 @@ This epic covers Phase 2 deliverables. No stories are defined yet.
 - Cursor `stop` → agent response capture
 - Gemini and Cursor `BeforeTool` first-edit and new-file triggers
 - `aim-save` parity skill for Codex CLI
+- Codex CLI `UserPromptSubmit` per-turn helpers (`user_prompt_capture.py`, `best_practices_retrieval.py`)
 
 **Dependency note:** Phase 2 depends on all Phase 1 epics being complete and the keyword trigger scripts having their `TRIGGER_CONFIG` updated to `enabled: true`.

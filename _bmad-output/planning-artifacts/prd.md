@@ -20,7 +20,7 @@ input_documents:
 
 **Prepared by:** Phil Mahncke (PM)
 **Date:** 2026-03-26
-**Version:** 1.1-draft
+**Version:** 1.1
 **GitHub Issue:** [Hidden-History/ai-memory#27](https://github.com/Hidden-History/ai-memory/issues/27)
 
 ---
@@ -51,13 +51,13 @@ The implementation strategy is an **IDE-specific adapter layer**: thin translati
 
 ## 2. Success Criteria
 
-All criteria are measured against a project where ai-memory is installed and at least one prior Claude Code session has produced stored memories.
+Each row is pass/fail on the stated Measurement Method and Target. **Default test setup** (for rows that do not state otherwise): ai-memory is installed on a project and at least one Qdrant memory point was written by a prior Claude Code session on that project. **Setup overrides:** SC-01 and SC-08 are evaluated only after a successful `add-project` run (and PATH or mock conditions named in those rows); no Claude-origin memories are required. SC-05 requires at least one Qdrant memory point written by the Gemini AfterTool adapter on that project (fixture-defined body)—not necessarily Claude-origin.
 
 | ID | Criterion | Measurement Method | Target |
 |----|-----------|-------------------|--------|
 | SC-01 | Zero-config activation after install for each new IDE | Run `ai-memory add-project` on a repo; verify config files exist for all configured IDEs without manual edits | Config files present and valid within 30s of command completion |
-| SC-02 | Session-start memory injection latency overhead (Gemini, Cursor, Codex) | Measure wall-clock time from hook invocation to stdout flush in session_start adapters across 10 runs on a cold Qdrant index | p95 < 3000ms; p99 < 5000ms |
-| SC-03 | PostToolUse capture hook returns control to the IDE within latency budget | Measure wall-clock time from hook invocation to exit(0) across 50 Edit/Write events | p95 < 500ms; p99 < 1000ms |
+| SC-02 | Session-start memory injection latency overhead (Gemini, Cursor, Codex) | Per NFR-101: 10 sequential invocations per SessionStart adapter (Gemini, Cursor, Codex) with identical stdin fixtures against a Qdrant instance seeded with ≥100 points; wall-clock from stdin closed to stdout flush | Pass per NFR-101 procedure |
+| SC-03 | PostToolUse capture hook returns control to the IDE within latency budget | Per NFR-102: 50 sequential invocations per capture adapter with identical stdin fixtures against a Qdrant instance seeded with ≥100 points; wall-clock from stdin closed to process exit after fork | Pass per NFR-102 procedure |
 | SC-04 | Cross-IDE memory recall: memory stored in Claude Code session is retrievable in Gemini CLI session | In a new Gemini CLI session on the same project, session_start adapter injects at least 1 memory previously stored by Claude Code PostToolUse hook | Pass/fail: injected context contains content from Claude Code session |
 | SC-05 | Cross-IDE memory recall: memory stored in Gemini CLI session is retrievable in Cursor session | In a new Cursor session on the same project, session_start adapter injects at least 1 memory previously stored by Gemini AfterTool adapter | Pass/fail: injected context contains content from Gemini session |
 | SC-06 | Error pattern sharing: error_pattern captured in one IDE is injected in a subsequent session in a different IDE | Write a known `error_pattern` fixture via IDE A's capture path; run IDE B's session-start adapter on the same project with a synthetic stdin fixture; parse stdout | Pass if the memory-injection field in stdout contains a substring from the fixture `error_pattern` body; fail otherwise |
@@ -65,6 +65,10 @@ All criteria are measured against a project where ai-memory is installed and at 
 | SC-08 | Installer adds only supported IDEs that are detected as installed | `add-project` does not write Gemini config when `gemini` binary is absent from PATH | Pass/fail per IDE detection check |
 | SC-09 | Slash command / skill invocation retrieves memory within latency budget | In each IDE, invoke the search-memory skill/command with a query matching a pre-indexed fixture memory; capture command/skill output | Pass if output contains the fixture's unique marker substring; fail otherwise; p95 < 5000ms end-to-end |
 | SC-10 | MCP tool events captured with normalized tool name | Trigger an MCP tool call in Gemini or Cursor; verify Qdrant point has `tool_name` in `mcp:<server>:<tool>` format | Pass/fail |
+| SC-11 | Codex per-turn context injection | Invoke Codex `UserPromptSubmit` adapter with a prompt matching a pre-indexed fixture memory; parse stdout JSON | `hookSpecificOutput` contains the fixture's unique marker substring; p95 < 2000ms |
+| SC-12 | Codex session summary capture | Fire a synthetic Codex `Stop` payload with a ≥5-turn transcript; query Qdrant `discussions` | Within 10s a point exists with `type == "session"` and `ide_source == "codex"` and payload text containing a substring from the synthetic transcript |
+
+*Traces:* SC-11 → UJ-07; SC-12 → UJ-05.
 
 ---
 
@@ -236,7 +240,7 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
 - MCP tool names matching `mcp_<server>_<tool>` must be passed through FR-101 normalization before the background fork.
 - The adapter must exit 0 in all cases and must not emit any output that blocks or modifies Gemini's tool execution.
 - **Test criteria:** Given a synthetic Gemini `AfterTool` payload for a file write event, the adapter must fork a background process and exit 0 within 500ms. The background process must store a memory point in Qdrant within 10s. Given a malformed stdin payload, the adapter must exit 0 without raising an unhandled exception. Given a payload with `tool_name: "mcp_postgres_query"`, the stored point must have `tool_name == "mcp:postgres:query"`.
-- **Traces to:** UJ-03, UJ-05, UJ-08
+- **Traces to:** UJ-08
 
 **FR-203** [Phase 1] — The system must provide a `PreCompress` adapter for Gemini CLI that maps to the existing `pre_compact_save` pipeline.
 
@@ -401,13 +405,13 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
   ```
   Body must instruct the agent to invoke the ai-memory search CLI script using `$AI_MEMORY_INSTALL_DIR` and present ranked results to the user.
 - The `.agents/skills/` path is the Codex-native skill directory. The `.codex/skills/` path is an alias and must also be supported if Codex resolves both.
-- **Test criteria:** The installed SKILL.md must pass YAML frontmatter parse with `name` and `description` present. Body must reference `$AI_MEMORY_INSTALL_DIR`.
+- **Test criteria:** Satisfies FR-508 for `search-memory`.
 - **Traces to:** UJ-06
 
 **FR-407** [Phase 1] — The system must register a `memory-status` skill for Codex CLI in `.agents/skills/memory-status/SKILL.md`.
 
 - SKILL.md format with YAML frontmatter (`name: memory-status`, `description: Check AI Memory system status`) and body instructing the agent to invoke the ai-memory status CLI script via `$AI_MEMORY_INSTALL_DIR`.
-- **Test criteria:** Installed SKILL.md must pass YAML frontmatter parse with required fields present.
+- **Test criteria:** Satisfies FR-508 for `memory-status`.
 - **Traces to:** UJ-06
 
 **FR-408** [Phase 1] — Codex CLI MCP integration note: Codex CLI supports `mcp_servers` config for MCP server registration. Whether `PostToolUse` or other hooks fire on MCP tool invocations is not confirmed in the current Codex CLI hook documentation. MCP event capture for Codex is a known gap pending upstream clarification. The adapter must log a warning if an unrecognized tool name pattern is encountered that may indicate an MCP tool.
@@ -468,7 +472,7 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
 
 **FR-508** [Phase 1] — The installer must create `.agents/skills/<name>/SKILL.md` files for `search-memory` and `memory-status` when Codex CLI is detected.
 
-- **Test criteria:** After `add-project` with Codex detected, `.agents/skills/search-memory/SKILL.md` and `.agents/skills/memory-status/SKILL.md` must exist and pass YAML frontmatter validation.
+- **Test criteria:** After `add-project` with Codex detected, for each `name` in `search-memory` and `memory-status`: `.agents/skills/<name>/SKILL.md` and `.codex/skills/<name>/SKILL.md` exist; YAML frontmatter on each file parses with the same `name` and `description` values as the other path; each body references `$AI_MEMORY_INSTALL_DIR`; `.codex/skills/<name>/SKILL.md` is byte-identical to `.agents/skills/<name>/SKILL.md` or is a symlink whose target resolves to that path (fail the check otherwise). Log which concrete assertion failed in the test output.
 - **Traces to:** UJ-01, UJ-06
 
 ---
@@ -484,8 +488,8 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
 
 **FR-602** [Phase 1] — Each adapter must resolve `cwd` using a documented fallback chain.
 
-- Fallback chain: (1) native `cwd` field; (2) `workspace_roots[0]` (Cursor); (3) `GEMINI_CWD` / `CURSOR_PROJECT_DIR` / env equivalents; (4) `os.getcwd()` at adapter invocation time.
-- **Test criteria:** Given a Cursor payload with no `cwd` field but `workspace_roots: ["/home/user/project"]`, the adapter must set `cwd = "/home/user/project"`. Verify via unit test.
+- Fallback chain: (1) native `cwd` field; (2) `workspace_roots[0]` (Cursor); (3) `GEMINI_CWD` (set by Gemini CLI process) / `CURSOR_PROJECT_DIR` (set by Cursor IDE process) — not installer-managed; (4) `os.getcwd()` at adapter invocation time.
+- **Test criteria:** Given a Cursor payload with no `cwd` field but `workspace_roots: ["/home/user/project"]`, the adapter must set `cwd = "/home/user/project"`. Verify via unit test. Given a Cursor payload with no `cwd` and empty `workspace_roots`, but `CURSOR_PROJECT_DIR=/tmp/proj` in the environment, the adapter must set `cwd = "/tmp/proj"`. Given a Gemini payload with no `cwd` but `GEMINI_CWD=/tmp/proj` in the environment, the adapter must set `cwd = "/tmp/proj"`. Codex has no step-3 env var; its chain falls through directly to `os.getcwd()`.
 - **Traces to:** UJ-01, UJ-02
 
 **FR-603** [Phase 1] — Each adapter's stdout output must conform strictly to the target IDE's required JSON format.
@@ -552,13 +556,15 @@ The three trigger scripts (`decision_keyword_trigger.py.disabled`, `best_practic
 
 ### 6.1 Latency
 
-**NFR-101** — The `SessionStart`/`BeforeAgent`/`sessionStart` adapter hook for each IDE must complete (stdout flushed, process exits) within 3000ms at p95 measured over 10 sequential invocations against a running Qdrant instance with a minimum of 100 stored points.
+**BP-01 — Authoritative Benchmark Procedure:** For **NFR-101** and **NFR-102**, use the measurement procedures defined in those requirements (sole source of truth for SessionStart retrieval and PostToolUse-class capture latency). For every **other** latency NFR in §6.1, run the adapter entry point N times (N = 20) with identical stdin fixtures against a local Qdrant instance seeded with ≥ 100 points. Record wall-clock from stdin closed to process exit (capture hooks) or stdin closed to stdout flush (retrieval hooks). Compute p95 and p99 across all N samples. Fail if p95 or p99 exceeds the budget stated in the NFR row. Persist raw timings in CI log or committed artifact.
 
-**NFR-102** — The `PostToolUse`/`AfterTool`/`postToolUse` adapter hook for each IDE must complete (background fork complete, process exits 0) within 500ms at p95. The background store process must complete within 10s.
+**NFR-101** — The `SessionStart`/`BeforeAgent`/`sessionStart` adapter hook for each IDE must complete (stdout flushed, process exits) within **3000ms at p95** and **5000ms at p99**. **Measurement (authoritative):** Run each qualifying adapter entry point **10** times with identical stdin fixtures against a local Qdrant instance seeded with **≥100** points. Record wall-clock from stdin closed to stdout flush. Compute p95 and p99 across the 10 samples. **Fail** if p95 ≥ 3000ms **or** p99 ≥ 5000ms. Persist raw timings in CI log or committed artifact.
+
+**NFR-102** — The `PostToolUse`/`AfterTool`/`postToolUse` adapter hook for each IDE must complete (background fork complete, process exits 0) within **500ms at p95** and **1000ms at p99**. **Measurement (authoritative):** Run each qualifying adapter entry point **50** times with identical stdin fixtures against a local Qdrant instance seeded with **≥100** points. Record wall-clock from stdin closed to process exit. Compute p95 and p99 across the 50 samples. **Fail** if p95 ≥ 500ms **or** p99 ≥ 1000ms. The background store process must complete within 10s. Persist raw timings in CI log or committed artifact.
 
 **NFR-103** — Adapters must not add latency to IDE tool execution. All capture operations must be fire-and-forget (fork to background, exit immediately) using the existing `subprocess.Popen(start_new_session=True)` pattern from `post_tool_capture.py`.
 
-**NFR-104** — Per-turn trigger adapters (FR-702, FR-703, FR-704) must complete within 2000ms with a per-trigger subprocess timeout of 1500ms. Triggers that exceed their timeout must be silently abandoned; the adapter must still exit 0 with valid JSON output.
+**NFR-104** — Per-turn trigger adapters (FR-702, FR-703, FR-704) must complete within **2000ms at p95** and **3000ms at p99** with a per-trigger subprocess timeout of 1500ms. Triggers that exceed their timeout must be silently abandoned; the adapter must still exit 0 with valid JSON output.
 
 ### 6.2 Security
 
