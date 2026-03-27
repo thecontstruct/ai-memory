@@ -823,7 +823,7 @@ detect_gemini_cli() {
 }
 
 detect_cursor_ide() {
-    [[ -d "$PROJECT_PATH/.cursor" ]] || command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1
+    command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1
 }
 
 detect_codex_cli() {
