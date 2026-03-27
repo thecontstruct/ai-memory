@@ -573,6 +573,7 @@ async def store_memory_async(hook_input: dict[str, Any]) -> None:
                 "type": "implementation",
                 "source_hook": "PostToolUse",
                 "session_id": session_id,
+                "ide_source": hook_input.get("ide_source", "claude"),
                 "created_at": now,
                 "stored_at": now,
                 "embedding_status": "pending",
