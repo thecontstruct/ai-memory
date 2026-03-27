@@ -46,7 +46,7 @@ None. All adapter scripts are standard-library Python plus existing `src/memory/
 
 ### Language Choice
 
-All adapter scripts are Python 3.10+, consistent with every existing hook script in `.claude/hooks/scripts/`. Shell wrappers are not used for adapter logic.
+All adapter scripts are Python 3.10+. Shell wrappers are not used for adapter logic.
 
 **Rationale (NFR-201):** Python's `subprocess.Popen(args=[...])` avoids shell interpolation risks that Bash string-concatenated commands would introduce. The existing `post_tool_capture.py` fork pattern is Python-native. Keeping adapters in the same language means `hooks_common.py` functions (`setup_python_path`, `setup_hook_logging`, `log_to_activity`, `get_hook_timeout`, `extract_error_signature`) are directly importable.
 
@@ -71,8 +71,8 @@ All adapter scripts are Python 3.10+, consistent with every existing hook script
 | Claude Adapter   |   | Gemini Adapter   |   | Cursor Adapter   |   | Codex Adapter    |
 | (normalize_      |   | (normalize_      |   | (normalize_      |   | (normalize_      |
 |  claude_event)   |   |  gemini_event)   |   |  cursor_event)   |   |  codex_event)    |
-| .claude/hooks/   |   | adapters/gemini/ |   | adapters/cursor/ |   | adapters/codex/  |
-| scripts/*.py     |   | *.py             |   | *.py             |   | *.py             |
+| adapters/claude/ |   | adapters/gemini/ |   | adapters/cursor/ |   | adapters/codex/  |
+| *.py             |   | *.py             |   | *.py             |   | *.py             |
 +--------+---------+   +--------+---------+   +--------+---------+   +--------+---------+
          |                       |                       |                       |
          | (translates to)       | (translates to)       | (translates to)       | (translates to)
@@ -155,11 +155,11 @@ Background store_async.py runs pipeline:
   - ide_source added as payload metadata
 ```
 
-**Claude Code hooks refactored:** Existing `.claude/hooks/scripts/*.py` files gain a
-`normalize_claude_event()` call at stdin parsing. The change per hook is ~5 lines:
-replace raw `json.loads(sys.stdin.read())` with `normalize_claude_event(json.loads(sys.stdin.read()))`.
-All downstream logic operates on the canonical dict. This ensures Claude Code memories
-also carry `ide_source="claude"` and that the canonical schema is validated consistently.
+**Claude Code as adapter:** Existing `.claude/hooks/scripts/*.py` files are migrated to
+`adapters/claude/*.py` and refactored to normalize through `normalize_claude_event()`.
+Background pipeline scripts (`store_async.py` etc.) move to `adapters/pipeline/`.
+`.claude/settings.json` command paths update to `$AI_MEMORY_INSTALL_DIR/adapters/claude/*.py`.
+All four IDEs follow the identical adapter → canonical schema → pipeline path.
 
 ### Data Flow: Retrieval Path (All IDEs — Unified)
 
@@ -342,7 +342,7 @@ def normalize_mcp_tool_name(raw_name: str) -> str | None:
 
 ### How Adapters Plug In Without Modifying Claude Code Hooks
 
-The adapters are entirely separate scripts in a separate directory (`$AI_MEMORY_INSTALL_DIR/adapters/<ide>/`). They call into the existing `src/memory/` pipeline code via Python imports after adding `$AI_MEMORY_INSTALL_DIR/src` to `sys.path` -- the identical pattern used by every existing Claude Code hook script. The Claude Code hooks continue to run from `.claude/hooks/scripts/` and are never touched.
+All adapters — including Claude Code — live under `$AI_MEMORY_INSTALL_DIR/adapters/<ide>/`. They call into the existing `src/memory/` pipeline code via Python imports after adding `$AI_MEMORY_INSTALL_DIR/src` to `sys.path`. Every IDE's config file references `$AI_MEMORY_INSTALL_DIR/adapters/<ide>/<script>.py` as the hook command.
 
 **The boundary:** Adapters translate IDE-native payloads into the canonical event dict, then either:
 - **Capture path:** Call `fork_to_background()` which spawns `store_async.py` -- the same background script Claude Code uses.
@@ -360,7 +360,7 @@ No new intermediate layer or abstraction is introduced between the adapters and 
 
 **How added:** There are two persistence paths:
 
-1. **`store_async.py` (PostToolUse background path):** The script builds a hardcoded `payload` dict for each chunked memory (`.claude/hooks/scripts/store_async.py`, approximately lines 569–604) before upserting to Qdrant. **`ide_source` is not in that dict today** — FEATURE-001 must add: `"ide_source": hook_input.get("ide_source", "claude")`.
+1. **`store_async.py` (PostToolUse background path):** The script (moved to `adapters/pipeline/store_async.py`) builds a `payload` dict for each chunked memory before upserting to Qdrant. **`ide_source` is not in that dict today** — FEATURE-001 must add: `"ide_source": hook_input.get("ide_source", "claude")`.
 
 2. **`storage.py` `store_memory()`:** Callers pass `**extra_fields`. The implementation routes keys that are not `MemoryPayload` dataclass fields into an `extra_payload` dict and merges them into the Qdrant `PointStruct.payload` via `**extra_payload` together with `payload.to_dict()`. Unknown fields (including `ide_source` when passed this way) therefore still appear in the stored JSON payload.
 
@@ -546,27 +546,47 @@ No credentials, API keys, or user-identifiable information beyond `AI_MEMORY_PRO
 
 ### Adapter Script Installation
 
-Adapter scripts are installed to:
+All adapter and pipeline scripts are installed to a single location:
 
 ```
 $AI_MEMORY_INSTALL_DIR/
   adapters/
-    gemini/
-      session_start.py       # FR-201: SessionStart / BeforeAgent
-      after_tool.py           # FR-202: AfterTool capture
-      pre_compress.py         # FR-203: PreCompress -> pre_compact pipeline
-    cursor/
-      session_start.py        # FR-301: sessionStart
-      post_tool_use.py        # FR-302: postToolUse capture
-      pre_compact.py          # FR-303: preCompact
-    codex/
-      session_start.py        # FR-401: SessionStart
-      post_tool_use.py        # FR-402: PostToolUse (Bash only)
-      user_prompt_submit.py   # FR-404: Per-turn context injection
-      stop.py                 # FR-405: Session summary capture
+    schema.py                # Shared: normalizers, validation, fork
+    pipeline/                # Shared: IDE-agnostic background processors
+      store_async.py
+      error_store_async.py
+      user_prompt_store_async.py
+      agent_response_store_async.py
+    claude/                  # Claude Code adapter entry points
+      session_start.py
+      post_tool_capture.py
+      context_injection_tier2.py
+      error_detection.py
+      error_pattern_capture.py
+      first_edit_trigger.py
+      new_file_trigger.py
+      pre_compact_save.py
+      user_prompt_capture.py
+      agent_response_capture.py
+      best_practices_retrieval.py
+      langfuse_stop_hook.py
+      manual_save_memory.py
+    gemini/                  # Gemini CLI adapter entry points
+      session_start.py
+      after_tool.py
+      pre_compress.py
+    cursor/                  # Cursor IDE adapter entry points
+      session_start.py
+      post_tool_use.py
+      pre_compact.py
+    codex/                   # Codex CLI adapter entry points
+      session_start.py
+      post_tool_use.py
+      user_prompt_submit.py
+      stop.py
 ```
 
-**Rationale:** Placing adapters under `$AI_MEMORY_INSTALL_DIR/adapters/` keeps them co-located with the rest of the installed system. The installer already copies source to `$AI_MEMORY_INSTALL_DIR/src/` and Claude Code hooks to `$AI_MEMORY_INSTALL_DIR/.claude/hooks/scripts/` (including `store_async.py`, which `fork_to_background()` spawns as the capture-path background target), so adding `adapters/` is a natural extension. Claude Code hooks are updated in-place to call `normalize_claude_event()` from the shared adapter schema.
+**Rationale:** All four IDEs — including Claude Code — follow the same directory structure under `adapters/`. Claude Code is not special-cased. The `.claude/hooks/scripts/` directory is eliminated; `.claude/settings.json` command paths point to `$AI_MEMORY_INSTALL_DIR/adapters/claude/*.py` just as `.gemini/settings.json` points to `adapters/gemini/*.py`. Background pipeline scripts (`store_async.py` etc.) move to `adapters/pipeline/` because they accept canonical events and are IDE-agnostic — every adapter's `fork_to_background()` spawns the same pipeline script.
 
 ### IDE Config File Generation
 
@@ -845,7 +865,7 @@ The existing 8-step flow gains IDE detection and config generation as part of th
 
 ```
 src/memory/
-  adapters/                          # NEW: Adapter package
+  adapters/                          # Adapter package — ALL IDEs live here
     __init__.py                      # Package marker
     schema.py                        # Canonical event schema, validation,
                                      #   normalize_mcp_tool_name(),
@@ -855,7 +875,28 @@ src/memory/
                                      #   normalize_codex_event(),
                                      #   resolve_session_id(),
                                      #   resolve_cwd(),
-                                     #   fork_to_background() (shared)
+                                     #   fork_to_background()
+    pipeline/                        # IDE-agnostic background processors
+      __init__.py
+      store_async.py                 # Moved from .claude/hooks/scripts/
+      error_store_async.py           # Moved from .claude/hooks/scripts/
+      user_prompt_store_async.py     # Moved from .claude/hooks/scripts/
+      agent_response_store_async.py  # Moved from .claude/hooks/scripts/
+    claude/                          # Claude Code adapter (same structure as others)
+      __init__.py
+      session_start.py               # SessionStart hook entry point
+      post_tool_capture.py           # PostToolUse capture (Edit/Write/NotebookEdit)
+      context_injection_tier2.py     # UserPromptSubmit per-turn injection
+      error_detection.py             # PostToolUse(Bash) error retrieval
+      error_pattern_capture.py       # PostToolUse(Bash) error capture
+      first_edit_trigger.py          # PreToolUse(Edit) trigger
+      new_file_trigger.py            # PreToolUse(Write) trigger
+      pre_compact_save.py            # PreCompact session summary
+      user_prompt_capture.py         # UserPromptSubmit capture
+      agent_response_capture.py      # Stop session summary
+      best_practices_retrieval.py    # UserPromptSubmit best practices
+      langfuse_stop_hook.py          # Stop tracing
+      manual_save_memory.py          # Manual save trigger
     gemini/
       __init__.py
       session_start.py               # FR-201
@@ -872,7 +913,14 @@ src/memory/
       post_tool_use.py               # FR-402
       user_prompt_submit.py          # FR-404
       stop.py                        # FR-405
-    templates/                       # Skill/command templates
+    templates/                       # Skill/command templates per IDE
+      claude/
+        search-memory/
+          SKILL.md                   # Existing aim-search equivalent
+        memory-status/
+          SKILL.md                   # Existing aim-status equivalent
+        save-memory/
+          SKILL.md                   # Existing aim-save equivalent
       gemini/
         search-memory.toml           # FR-205
         memory-status.toml           # FR-206
@@ -891,15 +939,23 @@ src/memory/
           SKILL.md                   # FR-407
 ```
 
+**Migration from `.claude/hooks/scripts/`:** The existing 18 hook scripts move from
+`.claude/hooks/scripts/*.py` to `src/memory/adapters/claude/*.py` and
+`src/memory/adapters/pipeline/*.py`. The `.claude/settings.json` command paths update
+from `.claude/hooks/scripts/<script>.py` to
+`$AI_MEMORY_INSTALL_DIR/adapters/claude/<script>.py`. The installer generates these
+paths identically for all four IDEs. The old `.claude/hooks/scripts/` directory is
+removed after migration.
+
 ### Module Boundaries
 
 | Location | Responsibility | Imports From |
 |----------|---------------|-------------|
-| `src/memory/adapters/schema.py` | Canonical schema, all 4 IDE normalizers, validation, MCP normalization, session/cwd resolution, shared `fork_to_background()` | `os`, `re`, `hashlib`, `json`, `subprocess`, `sys` (stdlib only at module level) |
-| `src/memory/adapters/<ide>/*.py` | IDE-specific stdin parsing, stdout formatting (Gemini/Cursor/Codex only) | `memory.adapters.schema`, `memory.hooks_common`, `memory.config`, `memory.search`, `memory.project`, `memory.health`, `memory.injection` |
+| `src/memory/adapters/schema.py` | Canonical schema, all 4 IDE normalizers, validation, MCP normalization, session/cwd resolution, `fork_to_background()` | `os`, `re`, `hashlib`, `json`, `subprocess`, `sys` (stdlib only) |
+| `src/memory/adapters/pipeline/*.py` | IDE-agnostic background processors (store, error store, user prompt store, agent response store) | `memory.*` (storage, search, security, config) |
+| `src/memory/adapters/<ide>/*.py` | IDE-specific hook entry points: parse stdin, normalize, call pipeline or retrieval, format stdout | `memory.adapters.schema`, `memory.hooks_common`, `memory.config`, `memory.search`, `memory.project`, `memory.health`, `memory.injection` |
 | `src/memory/hooks_common.py` | Shared hook utilities (UNCHANGED) | stdlib |
-| `.claude/hooks/scripts/*.py` | Claude Code hooks (REFACTORED to call `normalize_claude_event()` from `memory.adapters.schema`) | `memory.*`, `memory.adapters.schema` |
-| `scripts/install.sh` | Installer (EXTENDED) | N/A (Bash) |
+| `scripts/install.sh` | Installer (EXTENDED): IDE detection, config generation for all 4 IDEs, adapter + pipeline script installation | N/A (Bash) |
 
 ### Naming Conventions
 
@@ -932,7 +988,7 @@ All capture adapters (PostToolUse/AfterTool/postToolUse) use the same fork patte
 ```python
 def fork_to_background(canonical_event: dict) -> None:
     """Fork storage to background. Adapter exits immediately after this call."""
-    store_async_script = Path(INSTALL_DIR) / ".claude" / "hooks" / "scripts" / "store_async.py"
+    store_async_script = Path(INSTALL_DIR) / "adapters" / "pipeline" / "store_async.py"
     subprocess_env = os.environ.copy()
     sid = canonical_event.get("session_id", "")
     if sid:
