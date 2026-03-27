@@ -418,7 +418,7 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
 
 **FR-501** [Phase 1] — The installer must detect the presence of each target IDE before writing its config file.
 
-- Detection method: check for `gemini` binary in PATH for Gemini CLI; check for `.cursor` directory existence or `cursor` binary in PATH for Cursor; check for `codex` binary in PATH for Codex CLI.
+- Detection method: check for `gemini` binary in PATH for Gemini CLI; check for `.cursor` directory existence or `agent` or `cursor-agent` binary in PATH for Cursor; check for `codex` binary in PATH for Codex CLI.
 - The installer must not write a config file for an IDE that is not detected.
 - **Test criteria:** On a system where only `gemini` is in PATH (not `codex` or `cursor`), `add-project` must produce `.gemini/settings.json` and must not produce `.cursor/hooks.json` or `.codex/hooks.json`. Test with mocked PATH.
 - **Traces to:** UJ-01 (SC-08)
