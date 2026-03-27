@@ -83,8 +83,13 @@ try:
         ResponseHandlingException,
         UnexpectedResponse,
     )
-    from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
-    from qdrant_client.models import SparseVector
+    from qdrant_client.models import (
+        FieldCondition,
+        Filter,
+        MatchValue,
+        PointStruct,
+        SparseVector,
+    )
 except ImportError:
     PointStruct = None
     Filter = None

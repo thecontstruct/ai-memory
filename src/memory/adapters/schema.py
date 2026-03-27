@@ -257,6 +257,120 @@ def normalize_gemini_event(raw: dict, native_hook_name: str) -> dict:
     }
 
 
+# Cursor hook-to-canonical name mapping
+_CURSOR_HOOK_MAP = {
+    "sessionStart": "SessionStart",
+    "postToolUse": "PostToolUse",
+    "preToolUse": "PreToolUse",
+    "beforeSubmitPrompt": "UserPromptSubmit",
+    "preCompact": "PreCompact",
+    "stop": "Stop",
+    "sessionEnd": "SessionEnd",
+}
+
+# Cursor tool name → canonical tool name mapping
+_CURSOR_TOOL_MAP = {
+    "Write": "Write",
+    "Edit": "Edit",
+    "Shell": "Bash",
+    "Read": "Read",
+    "Grep": "Grep",
+    "Delete": "Delete",
+    "NotebookEdit": "NotebookEdit",
+}
+
+
+def normalize_cursor_event(raw: dict, native_hook_name: str) -> dict:
+    """Normalize Cursor IDE native stdin to canonical event schema.
+
+    Cursor uses camelCase hook names (sessionStart, postToolUse) and
+    tool names (Shell instead of Bash). Cursor-specific fields:
+    - is_background_agent: skip retrieval when True
+    - conversation_id: fallback for session_id
+    - workspace_roots: fallback for cwd
+    - tool_output: maps to canonical tool_response
+    - MCP tools: prefix "MCP:<name>" normalized via normalize_mcp_tool_name
+    """
+    canonical_hook = _CURSOR_HOOK_MAP.get(native_hook_name, native_hook_name)
+
+    raw_tool_name = raw.get("tool_name")
+    if raw_tool_name:
+        mcp_name = normalize_mcp_tool_name(raw_tool_name)
+        tool_name = mcp_name or _CURSOR_TOOL_MAP.get(raw_tool_name, raw_tool_name)
+    else:
+        tool_name = None
+
+    # Cursor uses tool_output (not tool_response) in postToolUse payload
+    tool_response = raw.get("tool_response") or raw.get("tool_output")
+
+    return {
+        "session_id": resolve_session_id(raw),
+        "cwd": resolve_cwd(raw, "cursor"),
+        "hook_event_name": canonical_hook,
+        "tool_name": tool_name,
+        "tool_input": raw.get("tool_input"),
+        "tool_response": tool_response,
+        "transcript_path": raw.get("transcript_path"),
+        "user_prompt": raw.get("prompt")
+        if canonical_hook == "UserPromptSubmit"
+        else None,
+        "ide_source": "cursor",
+        "trigger": raw.get("trigger"),
+        "is_background_agent": raw.get("is_background_agent", False),
+        "context_usage_percent": raw.get("context_usage_percent"),
+        "context_tokens": raw.get("context_tokens"),
+        "context_window_size": raw.get("context_window_size"),
+    }
+
+
+# Codex hook-to-canonical name mapping (Codex uses canonical names natively)
+_CODEX_HOOK_MAP = {
+    "SessionStart": "SessionStart",
+    "PostToolUse": "PostToolUse",
+    "UserPromptSubmit": "UserPromptSubmit",
+    "Stop": "Stop",
+}
+
+# Codex tool name → canonical tool name mapping (Bash-only for PostToolUse)
+_CODEX_TOOL_MAP = {
+    "Bash": "Bash",
+}
+
+
+def normalize_codex_event(raw: dict, hook_event_name: str) -> dict:
+    """Normalize Codex CLI native stdin to canonical event schema.
+
+    Codex uses canonical hook names natively (SessionStart, PostToolUse, etc.).
+    PostToolUse is Bash-only — no Write/Edit hooks in Codex.
+    - user_prompt: populated from raw.get("prompt") for UserPromptSubmit
+    - No is_background_agent support (defaults False)
+    - turn_id field available but not required
+    """
+    canonical_hook = _CODEX_HOOK_MAP.get(hook_event_name, hook_event_name)
+
+    raw_tool_name = raw.get("tool_name")
+    if raw_tool_name:
+        tool_name = _CODEX_TOOL_MAP.get(raw_tool_name, raw_tool_name)
+    else:
+        tool_name = None
+
+    return {
+        "session_id": resolve_session_id(raw),
+        "cwd": resolve_cwd(raw, "codex"),
+        "hook_event_name": canonical_hook,
+        "tool_name": tool_name,
+        "tool_input": raw.get("tool_input"),
+        "tool_response": raw.get("tool_response"),
+        "transcript_path": raw.get("transcript_path"),
+        "user_prompt": raw.get("prompt")
+        if canonical_hook == "UserPromptSubmit"
+        else None,
+        "ide_source": "codex",
+        "trigger": raw.get("trigger"),
+        "is_background_agent": False,
+    }
+
+
 def fork_to_background(canonical_event: dict, pipeline_script_path: str) -> None:
     """Fork storage to background. Adapter exits immediately after this call.
 
