@@ -571,19 +571,27 @@ $AI_MEMORY_INSTALL_DIR/
       best_practices_retrieval.py
       langfuse_stop_hook.py
       manual_save_memory.py
-    gemini/                  # Gemini CLI adapter entry points
-      session_start.py
-      after_tool.py
-      pre_compress.py
-    cursor/                  # Cursor IDE adapter entry points
-      session_start.py
-      post_tool_use.py
-      pre_compact.py
-    codex/                   # Codex CLI adapter entry points
-      session_start.py
-      post_tool_use.py
-      user_prompt_submit.py
-      stop.py
+    gemini/                  # Gemini CLI (full parity — 12 scripts)
+      session_start.py       after_tool_capture.py
+      error_detection.py     error_pattern_capture.py
+      before_tool_first_edit.py  before_tool_new_file.py
+      context_injection.py   user_prompt_capture.py
+      best_practices_retrieval.py  pre_compress.py
+      session_end.py         langfuse_stop.py
+    cursor/                  # Cursor IDE (full parity — 12 scripts)
+      session_start.py       post_tool_capture.py
+      error_detection.py     error_pattern_capture.py
+      pre_tool_first_edit.py pre_tool_new_file.py
+      context_injection.py   user_prompt_capture.py
+      best_practices_retrieval.py  pre_compact.py
+      stop.py                langfuse_stop.py
+    codex/                   # Codex CLI (9 scripts — 3 platform gaps)
+      session_start.py       error_detection.py
+      error_pattern_capture.py  context_injection.py
+      user_prompt_capture.py best_practices_retrieval.py
+      stop.py                langfuse_stop.py
+      # Gaps: no post_tool_capture, first_edit, new_file (Bash-only)
+      # Gap: no pre_compact (no PreCompact hook)
 ```
 
 **Rationale:** All four IDEs — including Claude Code — follow the same directory structure under `adapters/`. Claude Code is not special-cased. The `.claude/hooks/scripts/` directory is eliminated; `.claude/settings.json` command paths point to `$AI_MEMORY_INSTALL_DIR/adapters/claude/*.py` just as `.gemini/settings.json` points to `adapters/gemini/*.py`. Background pipeline scripts (`store_async.py` etc.) move to `adapters/pipeline/` because they accept canonical events and are IDE-agnostic — every adapter's `fork_to_background()` spawns the same pipeline script.
@@ -607,52 +615,53 @@ The installer generates these per-project config files:
   },
   "hooks": {
     "SessionStart": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/gemini/session_start.py\"",
-            "timeout": 30000
-          }
-        ]
-      }
+      { "matcher": ".*", "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/session_start.py\"", "timeout": 30000 }
+      ]}
     ],
     "AfterTool": [
-      {
-        "matcher": "edit_file|write_file|create_file",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/gemini/after_tool.py\"",
-            "timeout": 5000
-          }
-        ]
-      },
-      {
-        "matcher": "mcp_.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/gemini/after_tool.py\"",
-            "timeout": 5000
-          }
-        ]
-      }
+      { "matcher": "edit_file|write_file|create_file", "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/after_tool_capture.py\"", "timeout": 5000 }
+      ]},
+      { "matcher": "run_shell_command", "sequential": true, "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/error_detection.py\"", "timeout": 5000 },
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/error_pattern_capture.py\"", "timeout": 5000 }
+      ]},
+      { "matcher": "mcp_.*", "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/after_tool_capture.py\"", "timeout": 5000 }
+      ]}
+    ],
+    "BeforeTool": [
+      { "matcher": "edit_file", "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/before_tool_first_edit.py\"", "timeout": 2000 }
+      ]},
+      { "matcher": "write_file|create_file", "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/before_tool_new_file.py\"", "timeout": 2000 }
+      ]}
+    ],
+    "BeforeAgent": [
+      { "matcher": ".*", "sequential": true, "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/context_injection.py\"", "timeout": 5000 },
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/user_prompt_capture.py\"", "timeout": 5000 },
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/best_practices_retrieval.py\"", "timeout": 5000 }
+      ]}
     ],
     "PreCompress": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/gemini/pre_compress.py\"",
-            "timeout": 60000
-          }
-        ]
-      }
+      { "matcher": ".*", "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/pre_compress.py\"", "timeout": 60000 }
+      ]}
+    ],
+    "SessionEnd": [
+      { "matcher": ".*", "sequential": true, "hooks": [
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/session_end.py\"", "timeout": 10000 },
+        { "type": "command", "command": "\"$PY\" \"$AD/gemini/langfuse_stop.py\"", "timeout": 5000 }
+      ]}
     ]
   }
+
+  // Note: $PY = "$AI_MEMORY_INSTALL_DIR/.venv/bin/python"
+  //       $AD = "$AI_MEMORY_INSTALL_DIR/adapters"
+  // Installer expands these to absolute paths at write time.
 }
 ```
 
@@ -662,87 +671,77 @@ The installer generates these per-project config files:
   "version": 1,
   "hooks": {
     "sessionStart": [
-      {
-        "command": "AI_MEMORY_INSTALL_DIR=\"$AI_MEMORY_INSTALL_DIR\" AI_MEMORY_PROJECT_ID=\"$AI_MEMORY_PROJECT_ID\" QDRANT_HOST=\"$QDRANT_HOST\" QDRANT_PORT=\"$QDRANT_PORT\" EMBEDDING_HOST=\"$EMBEDDING_HOST\" EMBEDDING_PORT=\"$EMBEDDING_PORT\" SIMILARITY_THRESHOLD=\"$SIMILARITY_THRESHOLD\" LOG_LEVEL=\"$LOG_LEVEL\" \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/cursor/session_start.py\"",
-        "timeout": 30
-      }
+      { "command": "$ENV \"$PY\" \"$AD/cursor/session_start.py\"", "timeout": 30 }
     ],
     "postToolUse": [
-      {
-        "matcher": "Write|Edit|Shell|NotebookEdit",
-        "command": "AI_MEMORY_INSTALL_DIR=\"$AI_MEMORY_INSTALL_DIR\" AI_MEMORY_PROJECT_ID=\"$AI_MEMORY_PROJECT_ID\" QDRANT_HOST=\"$QDRANT_HOST\" QDRANT_PORT=\"$QDRANT_PORT\" EMBEDDING_HOST=\"$EMBEDDING_HOST\" EMBEDDING_PORT=\"$EMBEDDING_PORT\" SIMILARITY_THRESHOLD=\"$SIMILARITY_THRESHOLD\" LOG_LEVEL=\"$LOG_LEVEL\" \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/cursor/post_tool_use.py\"",
-        "timeout": 5
-      },
-      {
-        "matcher": "MCP:.*",
-        "command": "AI_MEMORY_INSTALL_DIR=\"$AI_MEMORY_INSTALL_DIR\" AI_MEMORY_PROJECT_ID=\"$AI_MEMORY_PROJECT_ID\" QDRANT_HOST=\"$QDRANT_HOST\" QDRANT_PORT=\"$QDRANT_PORT\" EMBEDDING_HOST=\"$EMBEDDING_HOST\" EMBEDDING_PORT=\"$EMBEDDING_PORT\" SIMILARITY_THRESHOLD=\"$SIMILARITY_THRESHOLD\" LOG_LEVEL=\"$LOG_LEVEL\" \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/cursor/post_tool_use.py\"",
-        "timeout": 5
-      }
+      { "matcher": "Write|Edit", "command": "$ENV \"$PY\" \"$AD/cursor/post_tool_capture.py\"", "timeout": 5 },
+      { "matcher": "Shell", "command": "$ENV \"$PY\" \"$AD/cursor/error_detection.py\"", "timeout": 5 },
+      { "matcher": "Shell", "command": "$ENV \"$PY\" \"$AD/cursor/error_pattern_capture.py\"", "timeout": 5 },
+      { "matcher": "MCP:.*", "command": "$ENV \"$PY\" \"$AD/cursor/post_tool_capture.py\"", "timeout": 5 }
+    ],
+    "preToolUse": [
+      { "matcher": "Edit", "command": "$ENV \"$PY\" \"$AD/cursor/pre_tool_first_edit.py\"", "timeout": 2 },
+      { "matcher": "Write", "command": "$ENV \"$PY\" \"$AD/cursor/pre_tool_new_file.py\"", "timeout": 2 }
+    ],
+    "beforeSubmitPrompt": [
+      { "command": "$ENV \"$PY\" \"$AD/cursor/context_injection.py\"", "timeout": 5 },
+      { "command": "$ENV \"$PY\" \"$AD/cursor/user_prompt_capture.py\"", "timeout": 5 },
+      { "command": "$ENV \"$PY\" \"$AD/cursor/best_practices_retrieval.py\"", "timeout": 5 }
     ],
     "preCompact": [
-      {
-        "command": "AI_MEMORY_INSTALL_DIR=\"$AI_MEMORY_INSTALL_DIR\" AI_MEMORY_PROJECT_ID=\"$AI_MEMORY_PROJECT_ID\" QDRANT_HOST=\"$QDRANT_HOST\" QDRANT_PORT=\"$QDRANT_PORT\" EMBEDDING_HOST=\"$EMBEDDING_HOST\" EMBEDDING_PORT=\"$EMBEDDING_PORT\" SIMILARITY_THRESHOLD=\"$SIMILARITY_THRESHOLD\" LOG_LEVEL=\"$LOG_LEVEL\" \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/cursor/pre_compact.py\"",
-        "timeout": 30
-      }
+      { "command": "$ENV \"$PY\" \"$AD/cursor/pre_compact.py\"", "timeout": 30 }
+    ],
+    "stop": [
+      { "command": "$ENV \"$PY\" \"$AD/cursor/stop.py\"", "timeout": 10 }
+    ],
+    "sessionEnd": [
+      { "command": "$ENV \"$PY\" \"$AD/cursor/langfuse_stop.py\"", "timeout": 5 }
     ]
   }
 }
+
+// $ENV = inline env var assignments (AI_MEMORY_INSTALL_DIR, AI_MEMORY_PROJECT_ID, etc.)
+// $PY  = "$AI_MEMORY_INSTALL_DIR/.venv/bin/python"
+// $AD  = "$AI_MEMORY_INSTALL_DIR/adapters"
+// Installer expands all placeholders to absolute values at write time.
 ```
 
-**Note on Cursor env propagation:** Cursor’s documented `.cursor/hooks.json` schema defines per-hook options such as `command`, `timeout`, `matcher`, and `failClosed` — not a top-level `env` object like Gemini’s `settings.json`. Therefore the installer must use **inline env var assignments** in every hook `command` string (same pattern as Codex), exporting at minimum `AI_MEMORY_INSTALL_DIR`, `AI_MEMORY_PROJECT_ID`, `QDRANT_HOST`, `QDRANT_PORT`, `EMBEDDING_HOST`, `EMBEDDING_PORT`, `SIMILARITY_THRESHOLD`, and `LOG_LEVEL` ahead of the Python executable. If a future Cursor release adds an `env` block comparable to Gemini’s, the installer may generate that block with the same variable set instead. **`CURSOR_PROJECT_DIR`** (used by `resolve_cwd`, FR-602) is provided by the Cursor IDE process environment and is **not** set by the installer.
+**Note on Cursor env propagation:** Cursor’s `.cursor/hooks.json` schema does not support a top-level `env` block. The installer inlines env var assignments in every `command` string: `AI_MEMORY_INSTALL_DIR`, `AI_MEMORY_PROJECT_ID`, `QDRANT_HOST`, `QDRANT_PORT`, `EMBEDDING_HOST`, `EMBEDDING_PORT`, `SIMILARITY_THRESHOLD`, `LOG_LEVEL`. `CURSOR_PROJECT_DIR` is provided by the Cursor process environment and is not set by the installer.
 
 **Codex CLI** (`.codex/hooks.json`):
 ```json
 {
   "hooks": {
     "SessionStart": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "AI_MEMORY_INSTALL_DIR=\"$AI_MEMORY_INSTALL_DIR\" AI_MEMORY_PROJECT_ID=\"$AI_MEMORY_PROJECT_ID\" QDRANT_HOST=\"$QDRANT_HOST\" QDRANT_PORT=\"$QDRANT_PORT\" EMBEDDING_HOST=\"$EMBEDDING_HOST\" EMBEDDING_PORT=\"$EMBEDDING_PORT\" SIMILARITY_THRESHOLD=\"$SIMILARITY_THRESHOLD\" LOG_LEVEL=\"$LOG_LEVEL\" \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/codex/session_start.py\"",
-            "timeout": 30
-          }
-        ]
-      }
+      { "matcher": ".*", "hooks": [
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/session_start.py\"", "timeout": 30 }
+      ]}
     ],
     "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "AI_MEMORY_INSTALL_DIR=\"$AI_MEMORY_INSTALL_DIR\" AI_MEMORY_PROJECT_ID=\"$AI_MEMORY_PROJECT_ID\" QDRANT_HOST=\"$QDRANT_HOST\" QDRANT_PORT=\"$QDRANT_PORT\" EMBEDDING_HOST=\"$EMBEDDING_HOST\" EMBEDDING_PORT=\"$EMBEDDING_PORT\" SIMILARITY_THRESHOLD=\"$SIMILARITY_THRESHOLD\" LOG_LEVEL=\"$LOG_LEVEL\" \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/codex/post_tool_use.py\"",
-            "timeout": 10
-          }
-        ]
-      }
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/error_detection.py\"", "timeout": 10 },
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/error_pattern_capture.py\"", "timeout": 10 }
+      ]}
     ],
     "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "AI_MEMORY_INSTALL_DIR=\"$AI_MEMORY_INSTALL_DIR\" AI_MEMORY_PROJECT_ID=\"$AI_MEMORY_PROJECT_ID\" QDRANT_HOST=\"$QDRANT_HOST\" QDRANT_PORT=\"$QDRANT_PORT\" EMBEDDING_HOST=\"$EMBEDDING_HOST\" EMBEDDING_PORT=\"$EMBEDDING_PORT\" SIMILARITY_THRESHOLD=\"$SIMILARITY_THRESHOLD\" LOG_LEVEL=\"$LOG_LEVEL\" \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/codex/user_prompt_submit.py\"",
-            "timeout": 5
-          }
-        ]
-      }
+      { "hooks": [
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/context_injection.py\"", "timeout": 5 },
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/user_prompt_capture.py\"", "timeout": 5 },
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/best_practices_retrieval.py\"", "timeout": 5 }
+      ]}
     ],
     "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "AI_MEMORY_INSTALL_DIR=\"$AI_MEMORY_INSTALL_DIR\" AI_MEMORY_PROJECT_ID=\"$AI_MEMORY_PROJECT_ID\" QDRANT_HOST=\"$QDRANT_HOST\" QDRANT_PORT=\"$QDRANT_PORT\" EMBEDDING_HOST=\"$EMBEDDING_HOST\" EMBEDDING_PORT=\"$EMBEDDING_PORT\" SIMILARITY_THRESHOLD=\"$SIMILARITY_THRESHOLD\" LOG_LEVEL=\"$LOG_LEVEL\" \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/codex/stop.py\"",
-            "timeout": 30
-          }
-        ]
-      }
+      { "hooks": [
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/stop.py\"", "timeout": 30 },
+        { "type": "command", "command": "$ENV \"$PY\" \"$AD/codex/langfuse_stop.py\"", "timeout": 5 }
+      ]}
     ]
   }
 }
+
+// Codex platform gaps: no post_tool_capture (Bash-only PostToolUse),
+// no first_edit/new_file triggers (Bash-only PreToolUse), no pre_compact (no hook).
+// $ENV/$PY/$AD expanded by installer at write time. Inline env needed (no env block).
 ```
 
 **Note on Codex env propagation:** Codex hooks use inline env var assignments in all command strings. This is the canonical pattern — no install-time detection of `env` block support is required.
@@ -897,22 +896,49 @@ src/memory/
       best_practices_retrieval.py    # UserPromptSubmit best practices
       langfuse_stop_hook.py          # Stop tracing
       manual_save_memory.py          # Manual save trigger
-    gemini/
+    gemini/                          # Gemini CLI adapter (full parity)
       __init__.py
-      session_start.py               # FR-201
-      after_tool.py                  # FR-202, FR-208
-      pre_compress.py                # FR-203
-    cursor/
+      session_start.py               # SessionStart → retrieval bootstrap
+      after_tool_capture.py          # AfterTool(edit/write/create) → code pattern capture
+      error_detection.py             # AfterTool(run_shell_command) → error retrieval
+      error_pattern_capture.py       # AfterTool(run_shell_command) → error capture
+      before_tool_first_edit.py      # BeforeTool(edit_file) → first edit trigger
+      before_tool_new_file.py        # BeforeTool(write_file/create_file) → new file trigger
+      context_injection.py           # BeforeAgent → per-turn injection
+      user_prompt_capture.py         # BeforeAgent → user prompt capture
+      best_practices_retrieval.py    # BeforeAgent → best practices retrieval
+      pre_compress.py                # PreCompress → session summary
+      session_end.py                 # SessionEnd → agent response capture
+      langfuse_stop.py               # SessionEnd → Langfuse tracing
+    cursor/                          # Cursor IDE adapter (full parity)
       __init__.py
-      session_start.py               # FR-301
-      post_tool_use.py               # FR-302, FR-308
-      pre_compact.py                 # FR-303
-    codex/
+      session_start.py               # sessionStart → retrieval bootstrap
+      post_tool_capture.py           # postToolUse(Write/Edit) → code pattern capture
+      error_detection.py             # postToolUse(Shell) → error retrieval
+      error_pattern_capture.py       # postToolUse(Shell) → error capture
+      pre_tool_first_edit.py         # preToolUse(Edit) → first edit trigger
+      pre_tool_new_file.py           # preToolUse(Write) → new file trigger
+      context_injection.py           # beforeSubmitPrompt → per-turn injection
+      user_prompt_capture.py         # beforeSubmitPrompt → user prompt capture
+      best_practices_retrieval.py    # beforeSubmitPrompt → best practices retrieval
+      pre_compact.py                 # preCompact → session summary
+      stop.py                        # stop → agent response capture
+      langfuse_stop.py               # sessionEnd → Langfuse tracing
+    codex/                           # Codex CLI adapter (parity minus platform gaps)
       __init__.py
-      session_start.py               # FR-401
-      post_tool_use.py               # FR-402
-      user_prompt_submit.py          # FR-404
-      stop.py                        # FR-405
+      session_start.py               # SessionStart → retrieval bootstrap
+      error_detection.py             # PostToolUse(Bash) → error retrieval
+      error_pattern_capture.py       # PostToolUse(Bash) → error capture
+      context_injection.py           # UserPromptSubmit → per-turn injection
+      user_prompt_capture.py         # UserPromptSubmit → user prompt capture
+      best_practices_retrieval.py    # UserPromptSubmit → best practices retrieval
+      stop.py                        # Stop → agent response capture
+      langfuse_stop.py               # Stop → Langfuse tracing
+      # PLATFORM GAPS (Codex PreToolUse is Bash-only, no PreCompact):
+      # - No post_tool_capture (Edit/Write not supported in PostToolUse)
+      # - No first_edit_trigger (PreToolUse is Bash-only)
+      # - No new_file_trigger (PreToolUse is Bash-only)
+      # - No pre_compact (no PreCompact hook in Codex)
     templates/                       # Skill/command templates per IDE
       claude/
         search-memory/
