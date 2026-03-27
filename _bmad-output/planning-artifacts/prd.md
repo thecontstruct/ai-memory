@@ -564,7 +564,7 @@ The three trigger scripts (`decision_keyword_trigger.py.disabled`, `best_practic
 
 ### 6.3 Backward Compatibility
 
-**NFR-301** — The Claude Code hook scripts (`.claude/hooks/scripts/*.py`) must not be modified by FEATURE-001. The Claude Code `.claude/settings.json` schema must not change. The existing Claude Code hook behavior must be byte-for-byte identical to v2.2.6 baseline.
+**NFR-301** — Claude Code hook scripts (`.claude/hooks/scripts/*.py`) are refactored to normalize through the canonical event schema via `normalize_claude_event()` from `memory.adapters.schema`. This is a ~5-line change per hook (stdin parsing only). The `.claude/settings.json` schema must not change. The observable behavior of Claude Code hooks (what gets stored, what gets retrieved, latency) must be functionally identical to v2.2.6 baseline. All Claude Code memories must now carry `ide_source="claude"` metadata.
 
 **NFR-302** — Existing Qdrant collections and point schemas must not change. The `ide_source` metadata field added by FR-102 must be stored on new points only; existing points without this field must remain valid and retrievable.
 
