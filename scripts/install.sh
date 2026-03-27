@@ -3083,6 +3083,234 @@ if old_key and old_key != new_key:
     log_success "Project hooks configured in $PROJECT_SETTINGS"
 }
 
+# =============================================================================
+# FEATURE-001: Multi-IDE Support — IDE Detection and Config Generation
+# =============================================================================
+
+# Detect which IDEs are installed
+detect_gemini_cli() {
+    command -v gemini >/dev/null 2>&1
+}
+
+detect_cursor_ide() {
+    command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1
+}
+
+detect_codex_cli() {
+    command -v codex >/dev/null 2>&1
+}
+
+# Parse --ide flag: returns space-separated list of IDEs to configure
+# Usage: IDE_LIST=$(parse_ide_flag "$IDE_FLAG")
+parse_ide_flag() {
+    local flag="$1"
+    if [[ -z "$flag" ]]; then
+        # Auto-detect
+        local detected=""
+        detect_gemini_cli && detected="$detected gemini"
+        detect_cursor_ide && detected="$detected cursor"
+        detect_codex_cli && detected="$detected codex"
+        echo "$detected"
+    elif [[ "$flag" == "none" ]]; then
+        echo ""
+    else
+        echo "$flag" | tr ',' ' '
+    fi
+}
+
+# Generate .gemini/settings.json for a project
+write_gemini_config() {
+    local project_path="$1"
+    local install_dir="$2"
+    local project_id="$3"
+    local force="${4:-false}"
+    local config_file="$project_path/.gemini/settings.json"
+
+    # Idempotency check (FR-504)
+    if [[ -f "$config_file" ]] && grep -q "AI_MEMORY_INSTALL_DIR" "$config_file" 2>/dev/null; then
+        if [[ "$force" != "true" ]]; then
+            log_warning "Gemini config already contains ai-memory hooks — skipping (use --force to overwrite)"
+            return 0
+        fi
+    fi
+
+    mkdir -p "$project_path/.gemini"
+    local py="$install_dir/.venv/bin/python"
+    local ad="$install_dir/adapters"
+
+    python3 -c "
+import json, sys
+install_dir, project_id, py, ad = sys.argv[1:5]
+config = {
+    'env': {
+        'AI_MEMORY_INSTALL_DIR': install_dir,
+        'AI_MEMORY_PROJECT_ID': project_id,
+        'QDRANT_HOST': 'localhost',
+        'QDRANT_PORT': '26350',
+        'EMBEDDING_HOST': 'localhost',
+        'EMBEDDING_PORT': '28080',
+        'SIMILARITY_THRESHOLD': '0.4',
+        'LOG_LEVEL': 'INFO'
+    },
+    'hooks': {
+        'SessionStart': [{'matcher': '.*', 'hooks': [{'type': 'command', 'command': f'\"{py}\" \"{ad}/gemini/session_start.py\"', 'timeout': 30000}]}],
+        'AfterTool': [
+            {'matcher': 'edit_file|write_file|create_file', 'hooks': [{'type': 'command', 'command': f'\"{py}\" \"{ad}/gemini/after_tool_capture.py\"', 'timeout': 5000}]},
+            {'matcher': 'run_shell_command', 'hooks': [
+                {'type': 'command', 'command': f'\"{py}\" \"{ad}/gemini/error_detection.py\"', 'timeout': 5000},
+                {'type': 'command', 'command': f'\"{py}\" \"{ad}/gemini/error_pattern_capture.py\"', 'timeout': 5000}
+            ]},
+            {'matcher': 'mcp_.*', 'hooks': [{'type': 'command', 'command': f'\"{py}\" \"{ad}/gemini/after_tool_capture.py\"', 'timeout': 5000}]}
+        ],
+        'PreCompress': [{'matcher': '.*', 'hooks': [{'type': 'command', 'command': f'\"{py}\" \"{ad}/gemini/pre_compress.py\"', 'timeout': 60000}]}]
+    }
+}
+with open(sys.argv[5], 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+" "$install_dir" "$project_id" "$py" "$ad" "$config_file"
+
+    # Deploy TOML commands
+    mkdir -p "$project_path/.gemini/commands"
+    cp "$install_dir/adapters/templates/gemini/"*.toml "$project_path/.gemini/commands/" 2>/dev/null || true
+
+    log_success "Gemini CLI config written to $config_file"
+}
+
+# Generate .cursor/hooks.json for a project
+write_cursor_config() {
+    local project_path="$1"
+    local install_dir="$2"
+    local project_id="$3"
+    local force="${4:-false}"
+    local config_file="$project_path/.cursor/hooks.json"
+
+    if [[ -f "$config_file" ]] && grep -q "AI_MEMORY_INSTALL_DIR" "$config_file" 2>/dev/null; then
+        if [[ "$force" != "true" ]]; then
+            log_warning "Cursor config already contains ai-memory hooks — skipping (use --force to overwrite)"
+            return 0
+        fi
+    fi
+
+    mkdir -p "$project_path/.cursor"
+    local py="$install_dir/.venv/bin/python"
+    local ad="$install_dir/adapters"
+    # Inline env prefix for Cursor (no top-level env block support)
+    local env_prefix="AI_MEMORY_INSTALL_DIR=\"$install_dir\" AI_MEMORY_PROJECT_ID=\"$project_id\" QDRANT_HOST=\"localhost\" QDRANT_PORT=\"26350\" EMBEDDING_HOST=\"localhost\" EMBEDDING_PORT=\"28080\" SIMILARITY_THRESHOLD=\"0.4\" LOG_LEVEL=\"INFO\""
+
+    python3 -c "
+import json, sys
+env_prefix, py, ad = sys.argv[1:4]
+config = {
+    'version': 1,
+    'hooks': {
+        'sessionStart': [{'command': f'{env_prefix} \"{py}\" \"{ad}/cursor/session_start.py\"', 'timeout': 30}],
+        'postToolUse': [
+            {'matcher': 'Write|Edit', 'command': f'{env_prefix} \"{py}\" \"{ad}/cursor/post_tool_capture.py\"', 'timeout': 5},
+            {'matcher': 'Shell', 'command': f'{env_prefix} \"{py}\" \"{ad}/cursor/error_detection.py\"', 'timeout': 5},
+            {'matcher': 'Shell', 'command': f'{env_prefix} \"{py}\" \"{ad}/cursor/error_pattern_capture.py\"', 'timeout': 5},
+            {'matcher': 'MCP:.*', 'command': f'{env_prefix} \"{py}\" \"{ad}/cursor/post_tool_capture.py\"', 'timeout': 5}
+        ],
+        'preCompact': [{'command': f'{env_prefix} \"{py}\" \"{ad}/cursor/pre_compact.py\"', 'timeout': 30}]
+    }
+}
+with open(sys.argv[4], 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+" "$env_prefix" "$py" "$ad" "$config_file"
+
+    # Deploy SKILL.md templates
+    for skill in search-memory memory-status save-memory; do
+        if [[ -d "$install_dir/adapters/templates/cursor/$skill" ]]; then
+            mkdir -p "$project_path/.cursor/skills/$skill"
+            cp "$install_dir/adapters/templates/cursor/$skill/SKILL.md" "$project_path/.cursor/skills/$skill/" 2>/dev/null || true
+        fi
+    done
+
+    log_success "Cursor IDE config written to $config_file"
+}
+
+# Generate .codex/hooks.json for a project
+write_codex_config() {
+    local project_path="$1"
+    local install_dir="$2"
+    local project_id="$3"
+    local force="${4:-false}"
+    local config_file="$project_path/.codex/hooks.json"
+
+    if [[ -f "$config_file" ]] && grep -q "AI_MEMORY_INSTALL_DIR" "$config_file" 2>/dev/null; then
+        if [[ "$force" != "true" ]]; then
+            log_warning "Codex config already contains ai-memory hooks — skipping (use --force to overwrite)"
+            return 0
+        fi
+    fi
+
+    mkdir -p "$project_path/.codex"
+    local py="$install_dir/.venv/bin/python"
+    local ad="$install_dir/adapters"
+    local env_prefix="AI_MEMORY_INSTALL_DIR=\"$install_dir\" AI_MEMORY_PROJECT_ID=\"$project_id\" QDRANT_HOST=\"localhost\" QDRANT_PORT=\"26350\" EMBEDDING_HOST=\"localhost\" EMBEDDING_PORT=\"28080\" SIMILARITY_THRESHOLD=\"0.4\" LOG_LEVEL=\"INFO\""
+
+    python3 -c "
+import json, sys
+env_prefix, py, ad = sys.argv[1:4]
+config = {
+    'hooks': {
+        'SessionStart': [{'matcher': '.*', 'hooks': [{'type': 'command', 'command': f'{env_prefix} \"{py}\" \"{ad}/codex/session_start.py\"', 'timeout': 30}]}],
+        'PostToolUse': [{'matcher': 'Bash', 'hooks': [
+            {'type': 'command', 'command': f'{env_prefix} \"{py}\" \"{ad}/codex/error_detection.py\"', 'timeout': 10},
+            {'type': 'command', 'command': f'{env_prefix} \"{py}\" \"{ad}/codex/error_pattern_capture.py\"', 'timeout': 10}
+        ]}],
+        'UserPromptSubmit': [{'hooks': [{'type': 'command', 'command': f'{env_prefix} \"{py}\" \"{ad}/codex/context_injection.py\"', 'timeout': 5}]}],
+        'Stop': [{'hooks': [{'type': 'command', 'command': f'{env_prefix} \"{py}\" \"{ad}/codex/stop.py\"', 'timeout': 30}]}]
+    }
+}
+with open(sys.argv[4], 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+" "$env_prefix" "$py" "$ad" "$config_file"
+
+    # Deploy SKILL.md templates to .agents/skills/ (primary) and .codex/skills/ (alias)
+    for skill in search-memory memory-status; do
+        if [[ -d "$install_dir/adapters/templates/codex/$skill" ]]; then
+            mkdir -p "$project_path/.agents/skills/$skill"
+            cp "$install_dir/adapters/templates/codex/$skill/SKILL.md" "$project_path/.agents/skills/$skill/" 2>/dev/null || true
+            # Create .codex/skills/ alias (FR-406)
+            mkdir -p "$project_path/.codex/skills/$skill"
+            cp "$install_dir/adapters/templates/codex/$skill/SKILL.md" "$project_path/.codex/skills/$skill/" 2>/dev/null || true
+        fi
+    done
+
+    log_success "Codex CLI config written to $config_file"
+}
+
+# Configure all detected IDEs for a project
+configure_multi_ide() {
+    local project_path="$1"
+    local install_dir="$2"
+    local project_id="$3"
+    local ide_flag="${4:-}"
+    local force="${5:-false}"
+
+    local ide_list
+    ide_list=$(parse_ide_flag "$ide_flag")
+
+    if [[ -z "$ide_list" ]]; then
+        log_info "No IDEs detected or --ide none specified — skipping multi-IDE config"
+        return 0
+    fi
+
+    log_info "Configuring IDEs: $ide_list"
+
+    for ide in $ide_list; do
+        case "$ide" in
+            gemini) write_gemini_config "$project_path" "$install_dir" "$project_id" "$force" ;;
+            cursor) write_cursor_config "$project_path" "$install_dir" "$project_id" "$force" ;;
+            codex)  write_codex_config "$project_path" "$install_dir" "$project_id" "$force" ;;
+            *) log_warning "Unknown IDE: $ide — skipping" ;;
+        esac
+    done
+}
+
 # Verify project hooks configuration
 verify_project_hooks() {
     log_debug "Verifying project hook configuration..."
