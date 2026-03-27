@@ -58,6 +58,11 @@ services:
       - COLBERT_ENABLED=${COLBERT_ENABLED:-false}
       # Set fastembed cache to persistent volume location
       - FASTEMBED_CACHE_PATH=/home/embedding/.cache/fastembed
+      # Laptop-friendly: cap ONNX/BLAS thread pools (EMBEDDING_OMP_NUM_THREADS in .env)
+      - OMP_NUM_THREADS=${EMBEDDING_OMP_NUM_THREADS:-2}
+      - MKL_NUM_THREADS=${EMBEDDING_OMP_NUM_THREADS:-2}
+      - OPENBLAS_NUM_THREADS=${EMBEDDING_OMP_NUM_THREADS:-2}
+      - NUMEXPR_NUM_THREADS=${EMBEDDING_OMP_NUM_THREADS:-2}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -70,6 +75,8 @@ services:
         limits:
           # SPEC-010: Increased from 2G to 4G for dual model support (two ONNX models ~3GB)
           memory: ${EMBEDDING_MEMORY_LIMIT:-4G}
+          # Throttle CPU so host UI stays responsive (raise EMBEDDING_CPU_LIMIT on servers)
+          cpus: "${EMBEDDING_CPU_LIMIT:-3}"
 
   monitoring-api:
     build:
@@ -455,8 +462,8 @@ services:
       - GITHUB_SYNC_CIRCUIT_BREAKER_THRESHOLD=${GITHUB_SYNC_CIRCUIT_BREAKER_THRESHOLD:-5}
       - GITHUB_SYNC_CIRCUIT_BREAKER_RESET=${GITHUB_SYNC_CIRCUIT_BREAKER_RESET:-60}
       # GitHub code blob batching / bounded file concurrency
-      - GITHUB_CODE_BLOB_FILE_CONCURRENCY=${GITHUB_CODE_BLOB_FILE_CONCURRENCY:-2}
-      - GITHUB_CODE_BLOB_CHUNK_BATCH_SIZE=${GITHUB_CODE_BLOB_CHUNK_BATCH_SIZE:-8}
+      - GITHUB_CODE_BLOB_FILE_CONCURRENCY=${GITHUB_CODE_BLOB_FILE_CONCURRENCY:-1}
+      - GITHUB_CODE_BLOB_CHUNK_BATCH_SIZE=${GITHUB_CODE_BLOB_CHUNK_BATCH_SIZE:-4}
       - GITHUB_CODE_BLOB_BATCH_STORAGE_ENABLED=${GITHUB_CODE_BLOB_BATCH_STORAGE_ENABLED:-true}
       # BUG-113: Embedding retry settings
       - EMBEDDING_MAX_RETRIES=${EMBEDDING_MAX_RETRIES:-2}
