@@ -3,8 +3,10 @@ project_name: ai-memory
 feature: "FEATURE-001: Multi-IDE Support"
 author: Architect
 date: 2026-03-26
-version: "1.0-draft"
-status: draft
+version: "1.0"
+status: approved
+approved_by: Phil Mahncke
+approved_date: 2026-03-27
 prd_version: "1.1"
 ---
 
