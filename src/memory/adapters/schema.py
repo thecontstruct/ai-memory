@@ -4,9 +4,14 @@ All IDE adapters normalize their native hook payloads into the canonical event
 dict defined here. The validation function enforces the contract between any
 adapter and the storage/retrieval pipeline.
 
-Architecture reference: §2 Canonical Event Schema
-PRD reference: FR-101, FR-102
+Architecture reference: §2 Canonical Event Schema, §3 Data Architecture
+PRD reference: FR-101, FR-102, FR-601, FR-602
 """
+
+import os
+import re
+import uuid
+from datetime import datetime, timezone
 
 VALID_IDE_SOURCES = {"claude", "gemini", "cursor", "codex"}
 
@@ -103,3 +108,66 @@ def validate_canonical_event(event: dict) -> None:
         raise ValueError(
             f"is_background_agent must be bool, got {type(event['is_background_agent']).__name__}"
         )
+
+
+def normalize_mcp_tool_name(raw_name: str) -> str | None:
+    """Normalize IDE-specific MCP tool names to canonical format.
+
+    Gemini format: mcp_<server>_<tool> -> mcp:<server>:<tool>
+    Cursor format: MCP:<name>          -> mcp:unknown:<name>
+
+    Returns None if the name is not an MCP tool name.
+    """
+    gemini_match = re.match(r"^mcp_([^_]+)_(.+)$", raw_name)
+    if gemini_match:
+        server = gemini_match.group(1)
+        tool = gemini_match.group(2)
+        return f"mcp:{server}:{tool}"
+
+    cursor_match = re.match(r"^MCP:(.+)$", raw_name)
+    if cursor_match:
+        tool = cursor_match.group(1)
+        return f"mcp:unknown:{tool}"
+
+    return None
+
+
+def resolve_session_id(payload: dict) -> str:
+    """Resolve session_id from IDE payload using fallback chain (FR-601)."""
+    sid = payload.get("session_id")
+    if sid and isinstance(sid, str) and sid.strip():
+        return sid.strip()
+
+    cid = payload.get("conversation_id")
+    if cid and isinstance(cid, str) and cid.strip():
+        return cid.strip()
+
+    tp = payload.get("transcript_path")
+    if tp and isinstance(tp, str) and tp.strip():
+        return os.path.splitext(os.path.basename(tp))[0]
+
+    cwd = payload.get("cwd", os.getcwd())
+    ts = datetime.now(tz=timezone.utc).isoformat()
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{cwd}:{ts}"))
+
+
+def resolve_cwd(payload: dict, ide_source: str) -> str:
+    """Resolve cwd from IDE payload using fallback chain (FR-602)."""
+    cwd = payload.get("cwd")
+    if cwd and isinstance(cwd, str) and cwd.strip():
+        return cwd.strip()
+
+    if ide_source == "cursor":
+        roots = payload.get("workspace_roots", [])
+        if roots and isinstance(roots[0], str):
+            return roots[0]
+        cursor_dir = os.environ.get("CURSOR_PROJECT_DIR")
+        if cursor_dir:
+            return cursor_dir
+
+    if ide_source == "gemini":
+        gemini_cwd = os.environ.get("GEMINI_CWD")
+        if gemini_cwd:
+            return gemini_cwd
+
+    return os.getcwd()

@@ -1,13 +1,19 @@
-"""Unit tests for adapters/schema.py canonical event validation.
+"""Unit tests for adapters/schema.py canonical event validation and utilities.
 
-Tests cover every acceptance criterion in Story 1.1.
+Tests cover acceptance criteria for Stories 1.1, 1.2, and 1.3.
 """
+
+import os
+from unittest.mock import patch
 
 import pytest
 
 from memory.adapters.schema import (
     VALID_HOOK_EVENTS,
     VALID_IDE_SOURCES,
+    normalize_mcp_tool_name,
+    resolve_cwd,
+    resolve_session_id,
     validate_canonical_event,
 )
 
@@ -273,3 +279,146 @@ class TestContextInts:
     def test_float_raises(self, field):
         with pytest.raises(ValueError, match=f"{field} must be int or None"):
             validate_canonical_event(_valid_event(**{field: 128000.0}))
+
+
+# =============================================================================
+# Story 1.2: normalize_mcp_tool_name()
+# =============================================================================
+
+
+class TestNormalizeMcpToolName:
+    def test_gemini_format(self):
+        assert normalize_mcp_tool_name("mcp_postgres_query") == "mcp:postgres:query"
+
+    def test_gemini_format_slack(self):
+        assert normalize_mcp_tool_name("mcp_slack_send") == "mcp:slack:send"
+
+    def test_cursor_format_with_server(self):
+        assert (
+            normalize_mcp_tool_name("MCP:postgres_query")
+            == "mcp:unknown:postgres_query"
+        )
+
+    def test_cursor_format_simple(self):
+        assert normalize_mcp_tool_name("MCP:query") == "mcp:unknown:query"
+
+    def test_non_mcp_returns_none(self):
+        assert normalize_mcp_tool_name("Write") is None
+
+    def test_non_mcp_edit_returns_none(self):
+        assert normalize_mcp_tool_name("Edit") is None
+
+    def test_non_mcp_bash_returns_none(self):
+        assert normalize_mcp_tool_name("Bash") is None
+
+    def test_gemini_multi_underscore_tool(self):
+        assert (
+            normalize_mcp_tool_name("mcp_github_create_issue")
+            == "mcp:github:create_issue"
+        )
+
+
+# =============================================================================
+# Story 1.3: resolve_session_id() and resolve_cwd()
+# =============================================================================
+
+
+class TestResolveSessionId:
+    def test_priority_1_native_session_id(self):
+        payload = {"session_id": "abc-123"}
+        assert resolve_session_id(payload) == "abc-123"
+
+    def test_priority_1_strips_whitespace(self):
+        payload = {"session_id": "  abc-123  "}
+        assert resolve_session_id(payload) == "abc-123"
+
+    def test_priority_2_conversation_id(self):
+        payload = {"conversation_id": "conv-456"}
+        assert resolve_session_id(payload) == "conv-456"
+
+    def test_priority_2_skips_empty_session_id(self):
+        payload = {"session_id": "", "conversation_id": "conv-456"}
+        assert resolve_session_id(payload) == "conv-456"
+
+    def test_priority_3_transcript_path(self):
+        payload = {"transcript_path": "/home/user/.claude/projects/abc123.jsonl"}
+        assert resolve_session_id(payload) == "abc123"
+
+    def test_priority_3_strips_extension(self):
+        payload = {"transcript_path": "/path/to/session-xyz.jsonl"}
+        assert resolve_session_id(payload) == "session-xyz"
+
+    def test_priority_4_uuid_fallback(self):
+        payload = {"cwd": "/home/user/project"}
+        result = resolve_session_id(payload)
+        # Should be a valid UUID string
+        import uuid
+
+        uuid.UUID(result)  # Raises ValueError if invalid
+
+    def test_priority_4_uses_getcwd_when_no_cwd(self):
+        payload = {}
+        result = resolve_session_id(payload)
+        import uuid
+
+        uuid.UUID(result)  # Should still produce valid UUID
+
+
+class TestResolveCwd:
+    def test_priority_1_native_cwd(self):
+        payload = {"cwd": "/home/user/project"}
+        assert resolve_cwd(payload, "gemini") == "/home/user/project"
+
+    def test_priority_1_strips_whitespace(self):
+        payload = {"cwd": "  /home/user/project  "}
+        assert resolve_cwd(payload, "cursor") == "/home/user/project"
+
+    def test_priority_2_cursor_workspace_roots(self):
+        payload = {"workspace_roots": ["/home/user/project"]}
+        assert resolve_cwd(payload, "cursor") == "/home/user/project"
+
+    def test_priority_2_cursor_skips_empty_cwd(self):
+        payload = {"cwd": "", "workspace_roots": ["/home/user/project"]}
+        assert resolve_cwd(payload, "cursor") == "/home/user/project"
+
+    def test_priority_2_not_used_for_gemini(self):
+        payload = {"workspace_roots": ["/home/user/project"]}
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("os.getcwd", return_value="/fallback"),
+        ):
+            assert resolve_cwd(payload, "gemini") == "/fallback"
+
+    def test_priority_3_cursor_project_dir_env(self):
+        payload = {}
+        with patch.dict(os.environ, {"CURSOR_PROJECT_DIR": "/env/cursor/project"}):
+            assert resolve_cwd(payload, "cursor") == "/env/cursor/project"
+
+    def test_priority_3_gemini_cwd_env(self):
+        payload = {}
+        with patch.dict(os.environ, {"GEMINI_CWD": "/env/gemini/project"}):
+            assert resolve_cwd(payload, "gemini") == "/env/gemini/project"
+
+    def test_priority_3_not_used_for_codex(self):
+        payload = {}
+        with (
+            patch.dict(os.environ, {"GEMINI_CWD": "/should/not/use"}, clear=True),
+            patch("os.getcwd", return_value="/fallback"),
+        ):
+            assert resolve_cwd(payload, "codex") == "/fallback"
+
+    def test_priority_4_os_getcwd_fallback(self):
+        payload = {}
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("os.getcwd", return_value="/fallback/cwd"),
+        ):
+            assert resolve_cwd(payload, "claude") == "/fallback/cwd"
+
+    def test_priority_4_codex_falls_through_to_getcwd(self):
+        payload = {}
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("os.getcwd", return_value="/codex/fallback"),
+        ):
+            assert resolve_cwd(payload, "codex") == "/codex/fallback"
