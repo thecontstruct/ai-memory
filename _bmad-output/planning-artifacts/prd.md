@@ -45,7 +45,7 @@ ai-memory v2.2.6 provides persistent, cross-session memory for Claude Code via a
 
 This is the highest-priority feature for the ai-memory roadmap, prioritized above stabilization and adoption, per the user decision recorded in issue #27. The primary target user is an individual developer who uses two or more AI coding tools concurrently and needs institutional memory — patterns, error fixes, conventions, decisions — to follow them across tool boundaries.
 
-The implementation strategy is an **IDE-specific adapter layer**: thin translation scripts per IDE that normalize foreign hook payloads into the canonical internal event schema that the existing storage and retrieval pipeline already consumes. The Claude Code hook scripts are not modified. All four IDEs read from and write to the same Qdrant collections.
+The implementation strategy is an **IDE-specific adapter layer**: thin translation scripts per IDE that normalize foreign hook payloads into the canonical internal event schema that the existing storage and retrieval pipeline already consumes. The existing Claude Code hook scripts are migrated to the adapter layer (`adapters/claude/*.py`) and refactored to normalize through the canonical event schema; `.claude/settings.json` command paths are updated accordingly. All four IDEs read from and write to the same Qdrant collections.
 
 ---
 
@@ -60,10 +60,10 @@ All criteria are measured against a project where ai-memory is installed and at 
 | SC-03 | PostToolUse capture hook returns control to the IDE within latency budget | Measure wall-clock time from hook invocation to exit(0) across 50 Edit/Write events | p95 < 500ms; p99 < 1000ms |
 | SC-04 | Cross-IDE memory recall: memory stored in Claude Code session is retrievable in Gemini CLI session | In a new Gemini CLI session on the same project, session_start adapter injects at least 1 memory previously stored by Claude Code PostToolUse hook | Pass/fail: injected context contains content from Claude Code session |
 | SC-05 | Cross-IDE memory recall: memory stored in Gemini CLI session is retrievable in Cursor session | In a new Cursor session on the same project, session_start adapter injects at least 1 memory previously stored by Gemini AfterTool adapter | Pass/fail: injected context contains content from Gemini session |
-| SC-06 | Error pattern sharing: error_pattern captured in one IDE is injected in a subsequent session in a different IDE | Trigger an error event in IDE A; open IDE B session on same project; verify sessionStart output references the captured error | Pass/fail |
+| SC-06 | Error pattern sharing: error_pattern captured in one IDE is injected in a subsequent session in a different IDE | Write a known `error_pattern` fixture via IDE A's capture path; run IDE B's session-start adapter on the same project with a synthetic stdin fixture; parse stdout | Pass if the memory-injection field in stdout contains a substring from the fixture `error_pattern` body; fail otherwise |
 | SC-07 | No regression in Claude Code hook behavior after FEATURE-001 ships | Run existing Claude Code integration test suite against v2.2.6 baseline; zero new failures permitted | 0 regression failures |
 | SC-08 | Installer adds only supported IDEs that are detected as installed | `add-project` does not write Gemini config when `gemini` binary is absent from PATH | Pass/fail per IDE detection check |
-| SC-09 | Slash command / skill invocation retrieves memory within latency budget | In each IDE, invoke the search-memory skill/command with a known query; verify output contains at least 1 relevant memory | Pass/fail; p95 < 5000ms end-to-end |
+| SC-09 | Slash command / skill invocation retrieves memory within latency budget | In each IDE, invoke the search-memory skill/command with a query matching a pre-indexed fixture memory; capture command/skill output | Pass if output contains the fixture's unique marker substring; fail otherwise; p95 < 5000ms end-to-end |
 | SC-10 | MCP tool events captured with normalized tool name | Trigger an MCP tool call in Gemini or Cursor; verify Qdrant point has `tool_name` in `mcp:<server>:<tool>` format | Pass/fail |
 
 ---
@@ -74,7 +74,7 @@ All criteria are measured against a project where ai-memory is installed and at 
 
 Deliver an adapter for each of the three target IDEs. Each adapter:
 - Translates the IDE's hook payload into the canonical internal event schema
-- Calls the existing storage/retrieval pipeline without modification
+- Calls the storage/retrieval pipeline through the canonical event schema (FR-101); the pipeline is extended to accept `ide_source` metadata (FR-102) and Claude Code hooks are refactored to normalize through the same schema (~5-line change per hook, see NFR-301)
 - Is registered in the IDE's config file by the installer
 
 Deliver installer changes that:
@@ -91,9 +91,11 @@ Deliver Codex CLI `UserPromptSubmit` and `Stop` hook adapters for per-turn conte
 
 Deliver `search-memory` and `memory-status` skill registration for Codex CLI into `.agents/skills/`.
 
+Phase 1 scope boundary: implementation must build only the deliverables covered by FRs tagged `[Phase 1]` in §5. The architecture document's adapter script trees show the full-parity target across all phases; scripts listed there without a corresponding `[Phase 1]` FR (e.g., BeforeTool/preToolUse triggers, BeforeAgent/beforeSubmitPrompt per-turn injection for Gemini and Cursor, SessionEnd for Gemini) are Phase 2 deliverables and must not be built in Phase 1.
+
 ### Phase 2 — Command/Skill Parity + Disabled Triggers
 
-Deliver equivalent slash commands or skills for Gemini CLI and Cursor IDE matching Claude Code's existing `aim-search`, `aim-status`, and `aim-save` skills. Codex CLI skills are partially delivered in Phase 1; Phase 2 ensures full parity (including `aim-save` equivalent).
+Gemini CLI slash commands and Cursor IDE skill registration were moved to Phase 1 (FR-205–207, FR-305–307). Phase 2 delivers `aim-save` parity for Codex CLI.
 
 Deliver the three disabled triggers (decision_keywords, best_practices_keywords, session_history_keywords) enabled and mapped to the equivalent per-prompt hook events in each IDE.
 
@@ -111,10 +113,10 @@ Define the adapter interface as a formal internal spec. Register adapters for an
 
 1. Developer runs `ai-memory install` (or `add-project` on an existing repo).
 2. Installer detects Claude Code, Gemini CLI, and Cursor IDE as present.
-3. Installer writes `.claude/settings.json` (unchanged from current), `.gemini/settings.json`, and `.cursor/hooks.json` with ai-memory hooks registered.
+3. Installer writes `.claude/settings.json` (schema unchanged per NFR-301; command paths rewritten to adapter layer per §1 implementation strategy), `.gemini/settings.json`, and `.cursor/hooks.json` with ai-memory hooks registered.
 4. Developer opens a Gemini CLI session on the project. Session-start context injection fires. No manual config step was required.
 
-**Exit condition:** All three IDEs inject memory on next session open without any developer action beyond the initial install command.
+**Exit condition:** After install with no manual IDE config edits, a session-start hook run per IDE on a project with seeded fixtures yields exit code 0, stdout parses as that IDE's required JSON, and the memory-injection field contains a substring from a fixture memory when the index is non-empty (or is empty-string / empty array per schema when the index is empty).
 
 ### UJ-02: First Session in a New IDE (Existing User)
 
@@ -123,9 +125,9 @@ Define the adapter interface as a formal internal spec. Register adapters for an
 1. Gemini CLI fires `SessionStart` hook.
 2. Gemini session_start adapter reads the hook payload, resolves `cwd` to the project, queries Qdrant using the same retrieval pipeline as Claude Code.
 3. Memories stored by Claude Code sessions (code patterns, conventions, error fixes) are injected as `additionalContext` in the Gemini `SessionStart` output.
-4. Developer sees Gemini respond with awareness of project conventions without re-explaining them.
+4. Gemini `SessionStart` stdout shows `hookSpecificOutput.additionalContext` containing a substring from a fixture memory written only by Claude Code on this project.
 
-**Exit condition:** Developer does not need to re-establish project context in the new IDE.
+**Exit condition:** The `additionalContext` string contains the fixture substring; if the index has no such memory, `additionalContext` is allowed to be empty and the adapter still exits 0.
 
 ### UJ-03: Cross-IDE Memory Recall (Active Multi-IDE Workflow)
 
@@ -136,7 +138,7 @@ Define the adapter interface as a formal internal spec. Register adapters for an
 3. Gemini `SessionStart` fires. The session_start adapter queries Qdrant and retrieves the pattern stored by the Cursor session.
 4. Gemini injects the cross-IDE memory as context.
 
-**Exit condition:** The developer's Gemini session has awareness of the Cursor session's stored pattern without any manual action.
+**Exit condition:** Gemini `SessionStart` stdout `additionalContext` contains a unique marker present only in the memory stored by the prior Cursor `postToolUse` run (verified via Qdrant scroll or test harness capture).
 
 ### UJ-04: Cross-IDE Error Pattern Sharing
 
@@ -147,7 +149,7 @@ Define the adapter interface as a formal internal spec. Register adapters for an
 3. Codex `SessionStart` fires. The Codex session_start adapter retrieves the stored `error_pattern`.
 4. The injected context includes the error and its resolution, preventing the developer from hitting the same error again.
 
-**Exit condition:** Codex CLI session has the error pattern in context before the developer encounters it.
+**Exit condition:** Codex `SessionStart` stdout (`hookSpecificOutput` injection field per FR-401) contains a substring from the `error_pattern` body stored in the prior Claude session (fixture-defined marker).
 
 ### UJ-05: Pre-Compact / Session Summary Across IDEs
 
@@ -157,7 +159,7 @@ Define the adapter interface as a formal internal spec. Register adapters for an
 2. Gemini pre_compact adapter normalizes the event and calls the existing `pre_compact_save.py` pipeline logic to store a session summary in the `discussions` collection.
 3. On the next session (in any IDE), session_start retrieves the session summary.
 
-**Exit condition:** Session continuity is preserved across context compression events in Gemini CLI.
+**Exit condition:** Within 10s of a Gemini `PreCompress` hook run, Qdrant contains a new session-summary point in `discussions`; a subsequent `SessionStart` stdout includes text traceable to that summary (fixture marker or scroll payload match).
 
 ### UJ-06: Slash Command / Skill Search (Manual Memory Lookup)
 
@@ -168,7 +170,7 @@ Define the adapter interface as a formal internal spec. Register adapters for an
 3. Ranked results are presented inline in the session.
 4. Developer continues the session with the retrieved context.
 
-**Exit condition:** Developer retrieves relevant memories on-demand without leaving the IDE session.
+**Exit condition:** Search-memory command/skill output includes the unique marker substring from a memory pre-indexed for that query (same check as SC-09).
 
 ### UJ-07: Per-Turn Trigger Injection (Keyword-Aware Context)
 
@@ -177,9 +179,9 @@ Define the adapter interface as a formal internal spec. Register adapters for an
 1. Developer types "why did we choose postgres over mysql for this project?"
 2. The `UserPromptSubmit` / `BeforeAgent` / `beforeSubmitPrompt` hook fires.
 3. The decision_keywords trigger adapter detects the keyword pattern, queries the `discussions` collection, and injects up to 2 matching decision memories into the prompt context.
-4. The IDE responds with awareness of the stored decision rationale.
+4. Parsed per-turn hook stdout (e.g. Gemini `BeforeAgent`, Cursor `beforeSubmitPrompt`, Codex `UserPromptSubmit` Phase 2 path per FR-702–704) includes a non-empty injected-context field whose text contains a fixture decision substring when the prompt matches the trigger pattern.
 
-**Exit condition:** IDE has decision context injected before generating a response, without any explicit search command from the developer.
+**Exit condition:** On a matching prompt fixture, injected context is non-empty and includes the fixture substring; on a non-matching prompt, injected context is empty and the adapter exits 0 (asserted in integration or hook-capture logs).
 
 ### UJ-08: MCP Tool Event Capture
 
@@ -188,9 +190,9 @@ Define the adapter interface as a formal internal spec. Register adapters for an
 1. Developer invokes an MCP tool through the IDE agent.
 2. The IDE fires an `AfterTool` (Gemini: `mcp_<server>_<tool>`) or `postToolUse` (Cursor: `MCP:<name>`) event.
 3. The adapter captures the MCP tool event, normalizes the tool name to `mcp:<server>:<tool>` format, and routes to the storage pipeline.
-4. The captured event is stored in Qdrant with `tool_name` in canonical format and `ide_source` set appropriately.
+4. The captured event is stored in Qdrant with `tool_name` matching `mcp:<server>:<tool>` and `ide_source` equal to `gemini` or `cursor` as per the emitting adapter FR.
 
-**Exit condition:** MCP tool interactions are captured and available for cross-session retrieval alongside native tool events.
+**Exit condition:** Immediately after the MCP hook run, a Qdrant query or scroll in tests returns a new point with `payload.tool_name` matching `mcp:<server>:<tool>` and `payload.ide_source` equal to `gemini` or `cursor` per the emitting adapter; SessionStart in a later test run with that index includes text from the stored MCP interaction in the injection field (fixture marker).
 
 ---
 
@@ -204,21 +206,22 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
 
 **FR-101** [Phase 1] — The system must define a canonical event schema that all IDE adapters translate their native payloads into before invoking the storage or retrieval pipeline.
 
-- Required fields: `session_id` (str), `cwd` (str), `hook_event_name` (str), `tool_name` (str | null), `tool_input` (dict | null), `tool_response` (dict | null), `transcript_path` (str | null), `ide_source` (str — one of `claude`, `gemini`, `cursor`, `codex`).
+- Required fields: `session_id` (str), `cwd` (str), `hook_event_name` (str), `tool_name` (str | null), `tool_input` (dict | null), `tool_response` (dict | str | null), `transcript_path` (str | null), `ide_source` (str — one of `claude`, `gemini`, `cursor`, `codex`), `user_prompt` (str | null).
+- Event-conditional / optional canonical fields: `trigger` (str | null — set for PreCompact events: `"manual"` or `"auto"`), `context_usage_percent` (float | null — PreCompact, Cursor-only), `context_tokens` (int | null — PreCompact, Cursor-only), `context_window_size` (int | null — PreCompact, Cursor-only), `is_background_agent` (bool — Cursor-only; when true the retrieval path must skip memory injection and exit 0).
 - MCP tool name normalization: tool names matching `mcp_<server>_<tool>` (Gemini) or `MCP:<name>` (Cursor) must be normalized to `mcp:<server>:<tool>` before the canonical event is constructed. The normalization function must handle both formats and produce consistent output. When the server component cannot be determined from the `MCP:<name>` Cursor format, the server segment must default to `unknown`.
-- **Test criteria:** A unit test must verify that each adapter produces a dict containing all required fields for each supported event type. Missing or wrong-type fields must raise `ValueError` before any pipeline call is made. A unit test must verify that `mcp_postgres_query`, `MCP:postgres_query`, and `MCP:query` each produce distinct but valid `mcp:<server>:<tool>` strings.
+- **Test criteria:** A unit test must verify that each adapter produces a dict containing all required fields for each supported event type. Missing or wrong-type fields must raise `ValueError` before any pipeline call is made. A unit test must verify that `mcp_postgres_query`, `MCP:postgres_query`, and `MCP:query` each produce distinct but valid `mcp:<server>:<tool>` strings. For `UserPromptSubmit` events, `user_prompt` must be a non-empty string; for all other event types it must be null. For PreCompact events from Cursor adapters, `context_usage_percent` must be float or null and `context_tokens`/`context_window_size` must be int or null. When `is_background_agent` is true in a SessionStart event, the adapter must return empty context and exit 0 without querying Qdrant.
 - **Traces to:** UJ-01, UJ-02, UJ-03, UJ-04, UJ-05, UJ-08
 
-**FR-102** [Phase 1] — The `ide_source` field must be stored as metadata on every Qdrant point written through a non-Claude-Code adapter.
+**FR-102** [Phase 1] — The `ide_source` field must be stored as metadata on every Qdrant point written through any adapter (including Claude Code after NFR-301 refactor).
 
-- **Test criteria:** After a Gemini adapter write, a direct Qdrant scroll of the stored point must return `payload.ide_source == "gemini"`. Existing Claude Code points that lack this field must not be modified.
+- **Test criteria:** After a Gemini adapter write, a direct Qdrant scroll of the stored point must return `payload.ide_source == "gemini"`. After a Claude Code adapter write, the stored point must return `payload.ide_source == "claude"`. Existing Claude Code points that lack this field must not be modified.
 - **Traces to:** UJ-03
 
 ---
 
 ### 5.2 Gemini CLI Adapter
 
-**FR-201** [Phase 1] — The system must provide a `SessionStart` adapter for Gemini CLI that reads the `BeforeAgent` or `SessionStart` hook JSON from stdin and outputs a JSON object with `hookSpecificOutput.additionalContext` populated with retrieved memories.
+**FR-201** [Phase 1] — The system must provide a `SessionStart` adapter for Gemini CLI that reads the `SessionStart` hook JSON from stdin and outputs a JSON object with `hookSpecificOutput.additionalContext` populated with retrieved memories.
 
 - The adapter must parse the Gemini-native stdin fields: `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `timestamp`.
 - The adapter must map `cwd` to project context using the existing `detect_project()` function.
@@ -243,7 +246,7 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
 
 **FR-204** [Phase 1] — The Gemini CLI adapter scripts must be registered in `.gemini/settings.json` under the `hooks` key using Gemini's config format, with `AI_MEMORY_INSTALL_DIR` resolvable from the command string.
 
-- Config format: `{ "hooks": { "AfterTool": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "...", "timeout": 60000 }] }] } }`
+- Config format: `{ "hooks": { "AfterTool": [{ "matcher": "edit_file|write_file|create_file", "hooks": [{ "type": "command", "command": "...", "timeout": 60000 }] }] } }`
 - The `AfterTool` matcher array must include a second entry with `matcher: "mcp_.*"` pointing to the same adapter command, to ensure MCP tool events are captured (see FR-208).
 - **Test criteria:** The installer must produce a `.gemini/settings.json` that passes JSON schema validation against the Gemini hooks config format. The command value must not contain shell interpolation of user-supplied input.
 - **Traces to:** UJ-01
@@ -253,7 +256,7 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
 - TOML format:
   ```toml
   description = "Search ai-memory for relevant stored memories"
-  prompt = "Search ai-memory for: {{args}}. Run: python3 $AI_MEMORY_INSTALL_DIR/src/memory/cli/search.py --query '{{args}}' --project $(pwd). Present the results clearly."
+  prompt = "Search ai-memory for: {{args}}. Execute the command [$AI_MEMORY_INSTALL_DIR/.venv/bin/python, $AI_MEMORY_INSTALL_DIR/src/memory/search.py, --query, {{args}}, --project, <current directory basename>] without shell interpolation. Present the results clearly."
   ```
 - `{{args}}` is the user-supplied search query passed at invocation.
 - The prompt must instruct Gemini to invoke the ai-memory search script and present ranked results.
@@ -429,13 +432,16 @@ Requirements are organized by component. Each FR is tagged with a phase and trac
 - **Test criteria:** `add-project --ide gemini` on a system with no `gemini` in PATH must produce `.gemini/settings.json`. `add-project --ide none` must skip all IDE config generation.
 - **Traces to:** UJ-01
 
-**FR-503** [Phase 1] — The installer must write all required env vars into each IDE's config file using that IDE's native env block mechanism.
+**FR-503** [Phase 1] — The installer must write all required env vars into each IDE's config file using that IDE's native env propagation mechanism.
 
 - Required env vars to propagate: `AI_MEMORY_INSTALL_DIR`, `AI_MEMORY_PROJECT_ID`, `QDRANT_HOST`, `QDRANT_PORT`, `EMBEDDING_HOST`, `EMBEDDING_PORT`, `SIMILARITY_THRESHOLD`, `LOG_LEVEL`.
 - For Gemini CLI: write to `env` block in `.gemini/settings.json`.
-- For Cursor IDE: write to `env` block in `sessionStart` hook output or equivalent.
-- For Codex CLI: write to the `hooks.json` command string using `env` propagation.
-- **Test criteria:** After `add-project`, each generated config file must contain all 8 required env vars. Verify by parsing the generated JSON and asserting key presence.
+- For Cursor IDE: inline env var assignments in every `command` string in `.cursor/hooks.json` (Cursor hooks do not support a top-level `env` block).
+- For Codex CLI: inline env var assignments in every `command` string in `.codex/hooks.json` (Codex hooks do not support a top-level `env` block).
+- **Test criteria:** After `add-project`, fail the check unless all of the following pass (each assertion is pass/fail on the written artifact):
+  - **Gemini:** Parse `.gemini/settings.json` as JSON. The `env` object must contain all eight keys (`AI_MEMORY_INSTALL_DIR`, `AI_MEMORY_PROJECT_ID`, `QDRANT_HOST`, `QDRANT_PORT`, `EMBEDDING_HOST`, `EMBEDDING_PORT`, `SIMILARITY_THRESHOLD`, `LOG_LEVEL`) with non-empty string values.
+  - **Cursor:** Parse `.cursor/hooks.json` as JSON. Collect every `command` string under `hooks` (all hook entries). Each `command` string must include inline assignments for all eight names (each name appears as the `NAME=` prefix of an assignment in that string).
+  - **Codex:** Parse `.codex/hooks.json` as JSON. Collect every `command` string in all hook definitions. Each `command` string must include inline assignments for all eight names (each name appears as the `NAME=` prefix of an assignment in that string).
 - **Traces to:** UJ-01
 
 **FR-504** [Phase 1] — The installer must not overwrite an existing IDE config file if it already contains ai-memory hook registrations.
@@ -516,7 +522,7 @@ The three trigger scripts (`decision_keyword_trigger.py.disabled`, `best_practic
 
 **FR-703** [Phase 2] — The system must provide a `beforeSubmitPrompt` trigger adapter for Cursor IDE that maps the Cursor per-turn hook to the same trigger pipeline as FR-701.
 
-- Hook mapping: Cursor `beforeSubmitPrompt` (or equivalent per-turn hook) → Claude Code `UserPromptSubmit` equivalent.
+- Hook mapping: Cursor `beforeSubmitPrompt` → Claude Code `UserPromptSubmit` equivalent.
 - The adapter must extract the user prompt from the Cursor payload, invoke enabled trigger scripts with a per-trigger timeout of 1500ms, and inject collected output into the Cursor output JSON.
 - **Test criteria:** Given a Cursor `beforeSubmitPrompt` payload with prompt `"best practice for error handling here?"`, the adapter must invoke `best_practices_keyword_trigger.py` and return results in Cursor JSON output format within 2000ms.
 - **Traces to:** UJ-07
