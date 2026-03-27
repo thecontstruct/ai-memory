@@ -8,8 +8,11 @@ Architecture reference: §2 Canonical Event Schema, §3 Data Architecture
 PRD reference: FR-101, FR-102, FR-601, FR-602
 """
 
+import json
 import os
 import re
+import subprocess
+import sys
 import uuid
 from datetime import datetime, timezone
 
@@ -171,3 +174,54 @@ def resolve_cwd(payload: dict, ide_source: str) -> str:
             return gemini_cwd
 
     return os.getcwd()
+
+
+def normalize_claude_event(raw: dict, hook_event_name: str) -> dict:
+    """Normalize Claude Code native stdin to canonical event schema.
+
+    Claude Code stdin already contains most canonical fields natively.
+    This normalizer standardizes naming and adds ide_source.
+    """
+    tool_name = raw.get("tool_name")
+    mcp_name = normalize_mcp_tool_name(tool_name) if tool_name else None
+
+    return {
+        "session_id": resolve_session_id(raw),
+        "cwd": resolve_cwd(raw, "claude"),
+        "hook_event_name": hook_event_name,
+        "tool_name": mcp_name or tool_name,
+        "tool_input": raw.get("tool_input"),
+        "tool_response": raw.get("tool_response"),
+        "transcript_path": raw.get("transcript_path"),
+        "user_prompt": raw.get("prompt")
+        if hook_event_name == "UserPromptSubmit"
+        else None,
+        "ide_source": "claude",
+        "trigger": raw.get("trigger"),
+        "is_background_agent": False,
+    }
+
+
+def fork_to_background(canonical_event: dict, pipeline_script_path: str) -> None:
+    """Fork storage to background. Adapter exits immediately after this call.
+
+    Spawns the pipeline script as a detached subprocess, passes the canonical
+    event JSON to its stdin, and returns without waiting. The subprocess
+    inherits the current environment plus CLAUDE_SESSION_ID.
+    """
+    subprocess_env = os.environ.copy()
+    sid = canonical_event.get("session_id", "")
+    if sid:
+        subprocess_env["CLAUDE_SESSION_ID"] = sid
+
+    process = subprocess.Popen(
+        [sys.executable, pipeline_script_path],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env=subprocess_env,
+    )
+    if process.stdin:
+        process.stdin.write(json.dumps(canonical_event).encode("utf-8"))
+        process.stdin.close()

@@ -11,6 +11,8 @@ import pytest
 from memory.adapters.schema import (
     VALID_HOOK_EVENTS,
     VALID_IDE_SOURCES,
+    fork_to_background,
+    normalize_claude_event,
     normalize_mcp_tool_name,
     resolve_cwd,
     resolve_session_id,
@@ -422,3 +424,110 @@ class TestResolveCwd:
             patch("os.getcwd", return_value="/codex/fallback"),
         ):
             assert resolve_cwd(payload, "codex") == "/codex/fallback"
+
+
+# =============================================================================
+# Story 1.4: normalize_claude_event() and fork_to_background()
+# =============================================================================
+
+
+class TestNormalizeClaudeEvent:
+    def test_basic_post_tool_use(self):
+        raw = {
+            "session_id": "sess-123",
+            "cwd": "/home/user/project",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/test.py", "content": "print('hi')"},
+            "tool_response": {"filePath": "/test.py"},
+        }
+        event = normalize_claude_event(raw, "PostToolUse")
+        assert event["session_id"] == "sess-123"
+        assert event["cwd"] == "/home/user/project"
+        assert event["hook_event_name"] == "PostToolUse"
+        assert event["tool_name"] == "Write"
+        assert event["ide_source"] == "claude"
+        assert event["user_prompt"] is None
+        assert event["is_background_agent"] is False
+
+    def test_mcp_tool_name_normalized(self):
+        raw = {
+            "session_id": "sess-123",
+            "cwd": "/project",
+            "tool_name": "mcp_postgres_query",
+        }
+        event = normalize_claude_event(raw, "PostToolUse")
+        assert event["tool_name"] == "mcp:postgres:query"
+
+    def test_non_mcp_tool_name_passed_through(self):
+        raw = {"session_id": "sess-123", "cwd": "/project", "tool_name": "Edit"}
+        event = normalize_claude_event(raw, "PostToolUse")
+        assert event["tool_name"] == "Edit"
+
+    def test_session_start(self):
+        raw = {"session_id": "sess-456", "cwd": "/project", "source": "resume"}
+        event = normalize_claude_event(raw, "SessionStart")
+        assert event["hook_event_name"] == "SessionStart"
+        assert event["tool_name"] is None
+
+    def test_user_prompt_submit(self):
+        raw = {
+            "session_id": "sess-789",
+            "cwd": "/project",
+            "prompt": "how should I handle errors?",
+        }
+        event = normalize_claude_event(raw, "UserPromptSubmit")
+        assert event["user_prompt"] == "how should I handle errors?"
+
+    def test_pre_compact_trigger(self):
+        raw = {
+            "session_id": "sess-abc",
+            "cwd": "/project",
+            "trigger": "auto",
+        }
+        event = normalize_claude_event(raw, "PreCompact")
+        assert event["trigger"] == "auto"
+
+    def test_validates_after_normalization(self):
+        raw = {"session_id": "sess-123", "cwd": "/project"}
+        event = normalize_claude_event(raw, "PostToolUse")
+        validate_canonical_event(event)
+
+
+class TestForkToBackground:
+    def test_spawns_subprocess_and_passes_json(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                "import sys, json\n"
+                "data = json.loads(sys.stdin.read())\n"
+                "assert data['ide_source'] == 'claude'\n"
+                "assert data['session_id'] == 'test-sess'\n"
+            )
+            script_path = f.name
+
+        try:
+            event = _valid_event(session_id="test-sess")
+            fork_to_background(event, script_path)
+            # No exception means spawn succeeded
+        finally:
+            os.unlink(script_path)
+
+    def test_does_not_use_shell_true(self):
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value.stdin = None
+            event = _valid_event(session_id="test-sess")
+            fork_to_background(event, "/fake/script.py")
+            call_kwargs = mock_popen.call_args
+            assert call_kwargs.kwargs.get("shell") is not True
+            assert "start_new_session" in call_kwargs.kwargs
+            assert call_kwargs.kwargs["start_new_session"] is True
+
+    def test_sets_claude_session_id_env(self):
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value.stdin = None
+            event = _valid_event(session_id="my-session-id")
+            fork_to_background(event, "/fake/script.py")
+            call_kwargs = mock_popen.call_args
+            env = call_kwargs.kwargs.get("env", {})
+            assert env.get("CLAUDE_SESSION_ID") == "my-session-id"
