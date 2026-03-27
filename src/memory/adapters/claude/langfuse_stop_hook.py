@@ -408,7 +408,8 @@ def main():
         # ── V3 SDK: Create root observation + child spans ──
         # LANGFUSE-INTEGRATION-SPEC.md §7.1: Uses start_as_current_observation (V3)
         try:
-            from langfuse import get_client as _get_v3_client, propagate_attributes
+            from langfuse import get_client as _get_v3_client
+            from langfuse import propagate_attributes
         except ImportError:
             logger.warning("langfuse_not_installed", extra={"message": "langfuse package not available, skipping trace emission"})
             sys.exit(0)

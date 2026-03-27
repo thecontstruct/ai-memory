@@ -4,15 +4,23 @@
 # Scrum Master: Sprint Planning Agent
 
 sprint:
-  number: 1
-  name: "Foundation + Claude Migration + Gemini Adapter"
-  goal: "Establish the canonical event schema, migrate Claude Code hooks through it, and deliver a working Gemini CLI adapter — proving the adapter pattern end-to-end before building Cursor and Codex."
+  number: 2
+  name: "Cursor + Codex Adapters"
+  goal: "Deliver Cursor IDE and Codex CLI adapters using the proven adapter pattern from Sprint 1. Both epics are parallelizable."
   status: planned
   started: null
   completed: null
 
+prior_sprints:
+  - number: 1
+    name: "Foundation + Claude Migration + Gemini Adapter"
+    status: completed
+    completed: 2026-03-27
+    stories_completed: 12
+    stories_planned: 12
+
 velocity:
-  estimated: null  # First sprint — no historical velocity
+  sprint_1: 12  # 12 stories completed in Sprint 1
 
 # ---------------------------------------------------------------------------
 # STORIES
@@ -31,31 +39,31 @@ stories:
   epic_1:
     - id: "1.1"
       title: "Create adapters/schema.py with canonical event schema and validation"
-      status: sprint_1
+      status: done
       depends_on: []
       effort: M
 
     - id: "1.2"
       title: "Add normalize_mcp_tool_name() to schema.py"
-      status: sprint_1
+      status: done
       depends_on: ["1.1"]
       effort: S
 
     - id: "1.3"
       title: "Add resolve_session_id() and resolve_cwd() to schema.py"
-      status: sprint_1
+      status: done
       depends_on: ["1.1"]
       effort: S
 
     - id: "1.4"
       title: "Add normalize_claude_event() and fork_to_background() to schema.py"
-      status: sprint_1
+      status: done
       depends_on: ["1.1", "1.2", "1.3"]
       effort: S
 
     - id: "1.5"
       title: "Add ide_source to store_async.py payload and move pipeline scripts"
-      status: sprint_1
+      status: done
       depends_on: ["1.4"]
       effort: M
 
@@ -67,13 +75,13 @@ stories:
   epic_2:
     - id: "2.1"
       title: "Migrate Claude Code hook scripts to adapters/claude/"
-      status: sprint_1
+      status: done
       depends_on: ["1.5"]
       effort: M
 
     - id: "2.2"
       title: "Update .claude/settings.json command paths to adapters/claude/"
-      status: sprint_1
+      status: done
       depends_on: ["2.1"]
       effort: S
 
@@ -86,31 +94,31 @@ stories:
   epic_3:
     - id: "3.1"
       title: "Create Gemini session_start.py adapter"
-      status: sprint_1
+      status: done
       depends_on: ["1.3", "1.4"]
       effort: M
 
     - id: "3.2"
       title: "Create Gemini after_tool_capture.py adapter"
-      status: sprint_1
+      status: done
       depends_on: ["1.2", "1.4", "1.5"]
       effort: M
 
     - id: "3.3"
       title: "Create Gemini error_detection.py and error_pattern_capture.py adapters"
-      status: sprint_1
+      status: done
       depends_on: ["1.4", "1.5"]
       effort: S
 
     - id: "3.4"
       title: "Create Gemini pre_compress.py adapter"
-      status: sprint_1
+      status: done
       depends_on: ["1.4", "1.5"]
       effort: S
 
     - id: "3.5"
       title: "Create Gemini TOML command templates"
-      status: sprint_1
+      status: done
       depends_on: ["1.1"]
       effort: S
 
@@ -123,31 +131,31 @@ stories:
   epic_4:
     - id: "4.1"
       title: "Create Cursor session_start.py adapter"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.3", "1.4"]
       effort: M
 
     - id: "4.2"
       title: "Create Cursor post_tool_capture.py adapter"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.2", "1.4", "1.5"]
       effort: M
 
     - id: "4.3"
       title: "Create Cursor error_detection.py and error_pattern_capture.py adapters"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.4", "1.5"]
       effort: S
 
     - id: "4.4"
       title: "Create Cursor pre_compact.py adapter"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.4", "1.5"]
       effort: S
 
     - id: "4.5"
       title: "Create Cursor SKILL.md templates"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.1"]
       effort: S
 
@@ -159,37 +167,37 @@ stories:
   epic_5:
     - id: "5.1"
       title: "Create Codex session_start.py adapter"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.3", "1.4"]
       effort: M
 
     - id: "5.2"
       title: "Create Codex post_tool_capture.py adapter (Bash-only)"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.4", "1.5"]
       effort: S
 
     - id: "5.2a"
       title: "Create Codex error_detection.py and error_pattern_capture.py adapters"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.4", "1.5"]
       effort: S
 
     - id: "5.3"
       title: "Create Codex context_injection.py adapter (UserPromptSubmit)"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.3", "1.4"]
       effort: M
 
     - id: "5.4"
       title: "Create Codex stop.py adapter"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.4", "1.5"]
       effort: S
 
     - id: "5.5"
       title: "Create Codex SKILL.md templates"
-      status: backlog
+      status: sprint_2
       depends_on: ["1.1"]
       effort: S
 
