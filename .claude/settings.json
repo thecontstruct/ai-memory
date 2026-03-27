@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "AI_MEMORY_INSTALL_DIR": "/Users/pmahncke/.ai-memory",
+    "AI_MEMORY_PROJECT_ID": "ai-memory",
+    "QDRANT_HOST": "localhost",
+    "QDRANT_PORT": "26350",
+    "EMBEDDING_HOST": "localhost",
+    "EMBEDDING_PORT": "28080",
+    "SIMILARITY_THRESHOLD": "0.4",
+    "LOG_LEVEL": "INFO",
+    "PUSHGATEWAY_URL": "localhost:29091",
+    "PUSHGATEWAY_ENABLED": "true",
+    "PARZIVAL_ENABLED": "true",
+    "PARZIVAL_USER_NAME": "Phil",
+    "PARZIVAL_LANGUAGE": "English",
+    "PARZIVAL_DOC_LANGUAGE": "English",
+    "PARZIVAL_OVERSIGHT_FOLDER": "oversight",
+    "PARZIVAL_HANDOFF_RETENTION": "10"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/session_start.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/session_start.py\" || true",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/user_prompt_capture.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/user_prompt_capture.py\" || true",
+            "timeout": 2000
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/context_injection_tier2.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/context_injection_tier2.py\" || true",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/new_file_trigger.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/new_file_trigger.py\" || true",
+            "timeout": 2000
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/first_edit_trigger.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/first_edit_trigger.py\" || true",
+            "timeout": 2000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/error_detection.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/error_detection.py\" || true",
+            "timeout": 2000
+          },
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/error_pattern_capture.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/error_pattern_capture.py\" || true",
+            "timeout": 3000
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/post_tool_capture.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/post_tool_capture.py\" || true",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto|manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/pre_compact_save.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/pre_compact_save.py\" || true",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$AI_MEMORY_INSTALL_DIR/adapters/claude/agent_response_capture.py\" ] && \"$AI_MEMORY_INSTALL_DIR/.venv/bin/python\" \"$AI_MEMORY_INSTALL_DIR/adapters/claude/agent_response_capture.py\" || true",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}
