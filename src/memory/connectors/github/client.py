@@ -26,9 +26,14 @@ class GitHubClientError(Exception):
     """Raised when GitHub API request fails.
 
     Wraps httpx errors and HTTP errors for consistent error handling.
+
+    Attributes:
+        status_code: HTTP status code (0 if not applicable, e.g. timeout/network error).
     """
 
-    pass
+    def __init__(self, message: str, status_code: int = 0) -> None:
+        self.status_code = status_code
+        super().__init__(message)
 
 
 class RateLimitExceeded(GitHubClientError):
@@ -36,7 +41,9 @@ class RateLimitExceeded(GitHubClientError):
 
     def __init__(self, reset_at: datetime, message: str = "Rate limit exceeded"):
         self.reset_at = reset_at
-        super().__init__(f"{message}. Resets at {reset_at.isoformat()}")
+        super().__init__(
+            f"{message}. Resets at {reset_at.isoformat()}", status_code=429
+        )
 
 
 class GitHubClient:
@@ -172,6 +179,34 @@ class GitHubClient:
             }
         except GitHubClientError as e:
             return {"success": False, "error": str(e)}
+
+    async def test_repo_access(self) -> dict[str, Any]:
+        """Validate token has access to the configured repository.
+
+        Calls GET /repos/{owner}/{repo} to verify the token can access
+        the specific repo, not just authenticate to GitHub. This catches
+        fine-grained PATs that are valid for auth but lack repo scope.
+
+        Matches the installer's validation: curl .../repos/${PROJECT_GITHUB_REPO}
+
+        Returns:
+            dict with keys: success (bool), status (int), repo (str).
+            On failure, includes error (str) with the HTTP error message.
+        """
+        try:
+            response = await self._request("GET", f"/repos/{self.repo}", point_cost=1)
+            return {
+                "success": True,
+                "status": 200,
+                "repo": response.get("full_name", self.repo),
+            }
+        except GitHubClientError as e:
+            return {
+                "success": False,
+                "status": e.status_code,
+                "repo": self.repo,
+                "error": str(e),
+            }
 
     # --- Repository Data Endpoints ---
 
@@ -655,7 +690,8 @@ class GitHubClient:
                         except (ValueError, UnicodeDecodeError):
                             error_body = {}
                         raise GitHubClientError(
-                            f"GitHub API error 403: {error_body.get('message', response.text)}"
+                            f"GitHub API error 403: {error_body.get('message', response.text)}",
+                            status_code=403,
                         )
 
                 # Secondary rate limit (Retry-After header)
@@ -685,7 +721,8 @@ class GitHubClient:
                         error_body = {}
                     raise GitHubClientError(
                         f"GitHub API error {response.status_code}: "
-                        f"{error_body.get('message', response.text)}"
+                        f"{error_body.get('message', response.text)}",
+                        status_code=response.status_code,
                     )
 
                 # Server errors (retryable)
@@ -708,7 +745,8 @@ class GitHubClient:
                         continue
                     raise GitHubClientError(
                         f"GitHub API server error {response.status_code} after "
-                        f"{self.MAX_RETRIES} retries"
+                        f"{self.MAX_RETRIES} retries",
+                        status_code=response.status_code,
                     )
 
                 # Success (2xx or 304)
