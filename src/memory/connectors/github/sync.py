@@ -61,11 +61,11 @@ def _langfuse_shutdown():
 
 atexit.register(_langfuse_shutdown)
 
-from memory.connectors.github.client import (  # noqa: E402
+from memory.connectors.github.client import (
     GitHubClient,
     GitHubClientError,
 )
-from memory.connectors.github.composer import (  # noqa: E402
+from memory.connectors.github.composer import (
     compose_ci_result,
     compose_commit,
     compose_issue,
@@ -74,14 +74,14 @@ from memory.connectors.github.composer import (  # noqa: E402
     compose_pr_diff,
     compose_pr_review,
 )
-from memory.connectors.github.schema import (  # noqa: E402
+from memory.connectors.github.schema import (
     GITHUB_COLLECTION,
     SOURCE_AUTHORITY_MAP,
     compute_content_hash,
 )
-from memory.models import MemoryType  # noqa: E402
-from memory.qdrant_client import get_qdrant_client  # noqa: E402
-from memory.storage import MemoryStorage  # noqa: E402
+from memory.models import MemoryType
+from memory.qdrant_client import get_qdrant_client
+from memory.storage import MemoryStorage
 
 logger = logging.getLogger("ai_memory.github.sync")
 
@@ -159,12 +159,16 @@ class GitHubSyncEngine:
         config: MemoryConfig | None = None,
         repo: str | None = None,
         branch: str | None = None,
+        token: str | None = None,
     ) -> None:
         """Initialize sync engine with config validation.
 
         Args:
             config: Memory configuration. Uses get_config() if None.
             repo: Repository in "owner/repo" format. Overrides config.github_repo.
+            branch: Branch to sync. Overrides config.github_branch.
+            token: Per-project token override (BUG-245). Falls back to
+                config.github_token when not provided.
 
         Raises:
             ValueError: If GitHub sync not enabled or config incomplete
@@ -178,8 +182,10 @@ class GitHubSyncEngine:
             raise ValueError("No repo specified and GITHUB_REPO not configured")
         self._branch = branch or self.config.github_branch
 
+        # BUG-245: per-project token > global token
+        resolved_token = token or self.config.github_token.get_secret_value()
         self.client = GitHubClient(
-            token=self.config.github_token.get_secret_value(),
+            token=resolved_token,
             repo=self.repo,
         )
         self.storage = MemoryStorage(self.config)

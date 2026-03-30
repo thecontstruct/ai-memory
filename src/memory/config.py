@@ -155,6 +155,11 @@ class MemoryConfig(BaseSettings):
         description="Similarity threshold for deduplication (0.80-0.99). Higher = stricter dedup, fewer similar memories stored.",
     )
 
+    cross_dedup_enabled: bool = Field(
+        default=True,
+        description="Enable cross-collection duplicate detection (TD-060). Env var: CROSS_DEDUP_ENABLED.",
+    )
+
     max_retrievals: int = Field(
         default=10, ge=1, le=50, description="Maximum memories to retrieve per session"
     )
@@ -1073,6 +1078,9 @@ class ProjectSyncConfig:
     github_repo: str | None = None
     github_branch: str = "main"
     github_enabled: bool = True
+    github_token: str | None = dataclass_field(
+        default=None, repr=False
+    )  # BUG-245: per-project token override
     jira_enabled: bool = False
     jira_instance_url: str | None = None
     jira_projects: list[str] = dataclass_field(default_factory=list)
@@ -1137,6 +1145,7 @@ def discover_projects(config_dir: Path | None = None) -> dict[str, ProjectSyncCo
                     github_repo=github.get("repo"),
                     github_branch=github.get("branch", "main"),
                     github_enabled=github.get("enabled", True),
+                    github_token=github.get("token"),  # BUG-245: per-project token
                     jira_enabled=jira.get("enabled", False),
                     jira_instance_url=jira.get("instance_url"),
                     jira_projects=jira_proj_raw,

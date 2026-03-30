@@ -36,6 +36,7 @@ class ProjectSyncConfig:
     github_repo: str | None = None
     github_branch: str = "main"
     github_enabled: bool = True
+    github_token: str | None = dataclass_field(default=None, repr=False)  # BUG-245: per-project token override
     jira_enabled: bool = False
     jira_instance_url: str | None = None
     jira_projects: list[str] = dataclass_field(default_factory=list)
@@ -100,6 +101,7 @@ def discover_projects(config_dir: Path | None = None) -> dict[str, ProjectSyncCo
                     github_repo=github.get("repo"),
                     github_branch=github.get("branch", "main"),
                     github_enabled=github.get("enabled", True),
+                    github_token=github.get("token"),  # BUG-245: per-project token
                     jira_enabled=jira.get("enabled", False),
                     jira_instance_url=jira.get("instance_url"),
                     jira_projects=jira_proj_raw,
@@ -134,15 +136,18 @@ def format_project_table(projects: dict[str, ProjectSyncConfig]) -> str:
 
     lines = []
     lines.append(
-        f"{'PROJECT ID':<40}  {'GITHUB REPO':<40}  {'BRANCH':<10}  {'ENABLED'}"
+        f"{'PROJECT ID':<40}  {'GITHUB REPO':<40}  {'BRANCH':<10}  {'ENABLED':<8}  {'TOKEN'}"
     )
-    lines.append("-" * 105)
+    lines.append("-" * 120)
 
     for project_id, cfg in sorted(projects.items()):
         github_repo = cfg.github_repo or "(none)"
         branch = cfg.github_branch
         enabled = "yes" if cfg.github_enabled else "no"
-        lines.append(f"{project_id:<40}  {github_repo:<40}  {branch:<10}  {enabled}")
+        token_source = "project" if cfg.github_token is not None else "shared"
+        lines.append(
+            f"{project_id:<40}  {github_repo:<40}  {branch:<10}  {enabled:<8}  {token_source}"
+        )
 
         if cfg.source_directory:
             lines.append(f"  {'source:':<10} {cfg.source_directory}")
@@ -169,6 +174,7 @@ def format_project_json(projects: dict[str, ProjectSyncConfig]) -> str:
                 "repo": cfg.github_repo,
                 "branch": cfg.github_branch,
                 "enabled": cfg.github_enabled,
+                "has_per_project_token": cfg.github_token is not None,
             },
             "jira": {
                 "enabled": cfg.jira_enabled,
