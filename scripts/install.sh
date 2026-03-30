@@ -4485,7 +4485,10 @@ setup_parzival() {
     echo ""
     read -p "Enable Parzival session agent? [y/N] " parzival_choice
 
-    if [[ "${parzival_choice,,}" =~ ^(y|yes)$ ]]; then
+    local parzival_choice_normalized
+    parzival_choice_normalized=$(printf '%s' "$parzival_choice" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "$parzival_choice_normalized" =~ ^(y|yes)$ ]]; then
         log_info "Setting up Parzival V2..."
 
         # Detect existing version for upgrade handling
