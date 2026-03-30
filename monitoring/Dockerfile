@@ -5,6 +5,9 @@ FROM python:3.11-slim
 LABEL maintainer="ai-memory"
 LABEL version="1.0.0"
 LABEL description="Monitoring API for AI Memory Module"
+LABEL ai-memory.managed="true"
+LABEL ai-memory.wipe-policy="exclude"
+LABEL org.opencontainers.image.vendor="ai-memory"
 
 # Non-root user for security (2026 security standard)
 RUN groupadd -r memory && useradd -r -g memory memory

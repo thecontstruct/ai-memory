@@ -9,6 +9,10 @@
 
 FROM python:3.11-slim
 
+LABEL ai-memory.managed="true"
+LABEL ai-memory.wipe-policy="exclude"
+LABEL org.opencontainers.image.vendor="ai-memory"
+
 # Security: Create non-root user
 RUN useradd -m -u 1000 streamlit
 

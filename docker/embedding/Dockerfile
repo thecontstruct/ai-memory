@@ -36,6 +36,10 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding('jinaai/jina-e
 # Stage 2: Runtime - Minimal production image
 FROM python:3.12-slim
 
+LABEL ai-memory.managed="true"
+LABEL ai-memory.wipe-policy="exclude"
+LABEL org.opencontainers.image.vendor="ai-memory"
+
 WORKDIR /app
 
 # Python runtime optimization
