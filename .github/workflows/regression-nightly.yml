@@ -1,0 +1,98 @@
+name: Regression Tests (Nightly)
+
+# =============================================================================
+# NIGHTLY REGRESSION TESTS
+# =============================================================================
+# This workflow provides regression coverage that PR-triggered workflows cannot
+# achieve because GitHub secrets are not available to fork PRs. The PR workflow
+# (regression-tests.yml) uses a secret-gated `if:` condition that evaluates false
+# on every PR from a fork, causing those regression tests to silently skip.
+#
+# This workflow runs unconditionally (no secret gating) because:
+#   1. It only triggers on schedule (nightly) and push-to-main events
+#   2. Both contexts are secrets-available (repo-owned workflows have secret access)
+#   3. Push-to-main means the PR was already merged, so failures indicate real issues
+#
+# See TD-397 and BP-149 for context.
+#
+# PRs rely on: unit tests, integration tests, E2E tests
+# Regression tests run: post-merge (push-to-main) and nightly
+# =============================================================================
+
+on:
+  schedule:
+    # Daily at 6:00 AM UTC
+    - cron: '0 6 * * *'
+  push:
+    branches: [main]
+    paths:
+      - "src/memory/**"
+      - ".claude/hooks/scripts/**"
+  workflow_dispatch:
+
+concurrency:
+  group: regression-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================================================
+  # REGRESSION TESTS - Live Langfuse + Qdrant required
+  # No secret gating - runs unconditionally in secrets-available context
+  # ============================================================================
+  regression-tests:
+    name: Regression Tests (Nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run regression test suite
+        run: |
+          pytest tests/test_regression.py -v --tb=short -m regression
+        env:
+          LANGFUSE_ENABLED: "true"
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+
+      - name: Run evaluations dry-run (quality gate check)
+        run: |
+          python scripts/run_evaluations.py \
+            --config evaluator_config.yaml \
+            --since "24h" \
+            --dry-run
+        env:
+          LANGFUSE_ENABLED: "true"
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+
+      - name: Upload regression results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-results-nightly-${{ github.run_id }}
+          path: |
+            .audit/logs/evaluations.jsonl
+          retention-days: 90
+          if-no-files-found: ignore

@@ -4,7 +4,7 @@
 # Usage: ./scripts/memory/health_check.sh
 # Exit codes: 0 = healthy, 1 = needs attention
 # Author: AI Memory Module Team
-# Last validated: 2026-01-13
+# Last validated: 2026-04-01
 
 # Strict mode: exit on error, undefined vars, pipe failures
 set -euo pipefail
@@ -36,6 +36,18 @@ readonly NC='\033[0m' # No Color
 ERRORS=0
 WARNINGS=0
 
+# Load runtime config from installed .env (safe grep+cut — never source .env)
+ENV_FILE="$HOME/.ai-memory/docker/.env"
+if [ ! -f "$ENV_FILE" ]; then
+    echo -e "${YELLOW}⚠ Config not found at $ENV_FILE — using defaults${NC}"
+    ((WARNINGS++))
+fi
+QDRANT_PORT=$(grep "^QDRANT_PORT=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true)
+QDRANT_PORT=${QDRANT_PORT:-26350}
+QDRANT_API_KEY=$(grep "^QDRANT_API_KEY=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true)
+EMBEDDING_PORT=$(grep "^EMBEDDING_PORT=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true)
+EMBEDDING_PORT=${EMBEDDING_PORT:-28080}
+
 # Check 1: Docker running
 echo -n "Docker daemon... "
 if docker ps > /dev/null 2>&1; then
@@ -49,7 +61,7 @@ fi
 
 # Check 2: Qdrant container
 echo -n "Qdrant container... "
-if docker compose -f ~/.ai-memory/docker/docker-compose.yml ps qdrant 2>/dev/null | grep -q "running"; then
+if docker compose -f ~/.ai-memory/docker/docker-compose.yml ps qdrant 2>/dev/null | grep -q "Up"; then
     echo -e "${GREEN}✓ Running${NC}"
 else
     echo -e "${RED}✗ Not running${NC}"
@@ -59,8 +71,10 @@ else
 fi
 
 # Check 3: Qdrant health endpoint
+# /healthz is a liveness probe (auth-whitelisted) — checks if Qdrant process is alive.
+# install.sh uses /readyz (readiness probe) for startup wait loops.
 echo -n "Qdrant health... "
-if curl -sf http://localhost:26350/healthz > /dev/null 2>&1; then
+if curl -sf "http://localhost:$QDRANT_PORT/healthz" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Healthy${NC}"
 else
     echo -e "${RED}✗ Unhealthy${NC}"
@@ -70,7 +84,11 @@ fi
 
 # Check 4: Qdrant collections
 echo -n "Qdrant collections... "
-COLLECTIONS=$(curl -sf http://localhost:26350/collections 2>/dev/null | grep -o '"name":"[^"]*"' | wc -l)
+if [ -n "$QDRANT_API_KEY" ]; then
+    COLLECTIONS=$(curl -sf -H "api-key: $QDRANT_API_KEY" "http://localhost:$QDRANT_PORT/collections" 2>/dev/null | grep -o '"name":"[^"]*"' | wc -l)
+else
+    COLLECTIONS=$(curl -sf "http://localhost:$QDRANT_PORT/collections" 2>/dev/null | grep -o '"name":"[^"]*"' | wc -l)
+fi
 if [ "$COLLECTIONS" -ge 2 ]; then
     echo -e "${GREEN}✓ Found $COLLECTIONS collections${NC}"
 else
@@ -81,7 +99,7 @@ fi
 
 # Check 5: Embedding service container
 echo -n "Embedding service... "
-if docker compose -f ~/.ai-memory/docker/docker-compose.yml ps embedding 2>/dev/null | grep -q "running"; then
+if docker compose -f ~/.ai-memory/docker/docker-compose.yml ps embedding 2>/dev/null | grep -q "Up"; then
     echo -e "${GREEN}✓ Running${NC}"
 else
     echo -e "${RED}✗ Not running${NC}"
@@ -92,7 +110,7 @@ fi
 
 # Check 6: Embedding service health
 echo -n "Embedding health... "
-if curl -sf http://localhost:28080/health > /dev/null 2>&1; then
+if curl -sf "http://localhost:$EMBEDDING_PORT/health" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Healthy${NC}"
 else
     echo -e "${YELLOW}⚠ Unhealthy (may be loading model)${NC}"
@@ -103,7 +121,7 @@ fi
 
 # Check 7: Embedding generation
 echo -n "Embedding generation... "
-EMBED_TEST=$(curl -sf -X POST http://localhost:28080/embed \
+EMBED_TEST=$(curl -sf -X POST "http://localhost:$EMBEDDING_PORT/embed" \
   -H "Content-Type: application/json" \
   -d '{"texts":["test"]}' 2>/dev/null)
 if echo "$EMBED_TEST" | grep -q "embeddings"; then
@@ -116,8 +134,8 @@ fi
 
 # Check 8: Queue file
 echo -n "Queue file... "
-if [ -f ~/.claude-memory/pending_queue.jsonl ]; then
-    QUEUE_SIZE=$(wc -l < ~/.claude-memory/pending_queue.jsonl)
+if [ -f ~/.ai-memory/pending_queue.jsonl ]; then
+    QUEUE_SIZE=$(wc -l < ~/.ai-memory/pending_queue.jsonl)
     if [ "$QUEUE_SIZE" -eq 0 ]; then
         echo -e "${GREEN}✓ Empty (no pending items)${NC}"
     else
@@ -131,19 +149,19 @@ fi
 
 # Check 9: Stale locks
 echo -n "Stale locks... "
-STALE_LOCKS=$(find ~/.claude-memory -name "*.lock" -mmin +60 2>/dev/null | wc -l)
+STALE_LOCKS=$(find ~/.ai-memory -name "*.lock" -mmin +60 2>/dev/null | wc -l)
 if [ "$STALE_LOCKS" -eq 0 ]; then
     echo -e "${GREEN}✓ None${NC}"
 else
     echo -e "${YELLOW}⚠ Found $STALE_LOCKS stale locks${NC}"
-    echo "  → Run: rm ~/.claude-memory/*.lock"
+    echo "  → Run: rm ~/.ai-memory/*.lock"
     echo "  → See: docs/RECOVERY.md#queue-file-issues"
     ((WARNINGS++))
 fi
 
 # Check 10: Disk space
 echo -n "Disk space... "
-DISK_FREE=$(df -h ~/.claude-memory 2>/dev/null | awk 'NR==2 {print $4}' | sed 's/G//')
+DISK_FREE=$(df -h ~/.ai-memory 2>/dev/null | awk 'NR==2 {print $4}' | sed 's/G//')
 if [ -n "$DISK_FREE" ]; then
     if (( $(echo "$DISK_FREE > 5" | bc -l 2>/dev/null || echo 0) )); then
         echo -e "${GREEN}✓ ${DISK_FREE}GB free${NC}"

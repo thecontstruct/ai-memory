@@ -24,7 +24,7 @@ from qdrant_client import models
 from memory.config import COLLECTION_CODE_PATTERNS, MemoryConfig, get_config
 
 # LANGFUSE: Uses direct SDK (Path B). See LANGFUSE-INTEGRATION-SPEC.md §3.2, §7.3
-# SDK VERSION: V3 ONLY. Use get_client(), observe(), propagate_attributes().
+# SDK VERSION: V4. Use get_client(), observe(), propagate_attributes().
 # Do NOT use Langfuse() constructor, start_span(), start_generation(), or langfuse_context.
 
 # Langfuse @observe() + propagate_attributes — conditional import (graceful degradation)
@@ -174,6 +174,11 @@ class GitHubSyncEngine:
             ValueError: If GitHub sync not enabled or config incomplete
         """
         self.config = config or get_config()
+        # BUG-251: Synthetic session ID for service contexts that lack CLAUDE_SESSION_ID
+        os.environ.setdefault(
+            "CLAUDE_SESSION_ID",
+            f"github-event-sync-{datetime.now(timezone.utc).date().isoformat()}",
+        )
         if not self.config.github_sync_enabled:
             raise ValueError("GitHub sync not enabled (GITHUB_SYNC_ENABLED=false)")
 

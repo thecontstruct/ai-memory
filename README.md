@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.2.7-green?style=flat-square" alt="Version 2.2.7">
+  <img src="https://img.shields.io/badge/version-2.3.0-green?style=flat-square" alt="Version 2.3.0">
   <a href="https://github.com/Hidden-History/ai-memory/stargazers"><img src="https://img.shields.io/github/stars/Hidden-History/ai-memory?color=blue&style=flat-square" alt="Stars"></a>
   <a href="https://github.com/Hidden-History/ai-memory/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Hidden-History/ai-memory?style=flat-square" alt="License"></a>
   <a href="https://github.com/Hidden-History/ai-memory/issues"><img src="https://img.shields.io/github/issues/Hidden-History/ai-memory?color=red&style=flat-square" alt="Issues"></a>
@@ -107,6 +107,16 @@ See [docs/DISPATCH-SKILLS.md](docs/DISPATCH-SKILLS.md) for setup and usage of th
 **The core principle: Parzival recommends. You decide.** Parzival is the navigator — you are the captain. He plans, delegates, and verifies. He never writes code, never makes final decisions without your approval, and a 20-constraint enforcement system prevents behavioral drift across long sessions.
 
 Parzival is optional but highly recommended — he enables cross-session agent memory, full project lifecycle management, and the quality enforcement that keeps complex multi-session projects on track. AI Memory's core features (semantic search, GitHub sync, skills, freshness detection) work independently, but Parzival is where the system reaches its full potential. To start: `/pov:parzival`
+
+**Session workflow — three commands is all you need:**
+
+```
+/pov:parzival          → Activate. Parzival detects your project phase and recommends next steps.
+/pov:parzival-start    → Load full context from your last session and continue where you left off.
+/pov:parzival-closeout → Save progress, log decisions and tech debt, create handoff for next session.
+```
+
+Start every session with `/pov:parzival`. End every session with `/pov:parzival-closeout`. Parzival handles everything in between — you never need to interact with other agents directly.
 
 See [docs/parzival/](docs/parzival/) for the full documentation suite and [docs/DISPATCH-SKILLS.md](docs/DISPATCH-SKILLS.md) for multi-provider dispatch setup.
 
@@ -551,7 +561,7 @@ All services use `2XXXX` prefix to avoid conflicts:
 | `EMBEDDING_HOST`       | `localhost`          | Embedding service hostname        |
 | `EMBEDDING_PORT`       | `28080`              | Embedding service port            |
 | `AI_MEMORY_INSTALL_DIR`   | `~/.ai-memory`     | Installation directory            |
-| `MEMORY_LOG_LEVEL`     | `INFO`               | Logging level (DEBUG/INFO/WARNING)|
+| `AI_MEMORY_LOG_LEVEL`  | `INFO`               | Logging level (DEBUG/INFO/WARNING)|
 
 **Jira Cloud Integration (Optional):**
 
@@ -570,7 +580,7 @@ See [docs/JIRA-INTEGRATION.md](docs/JIRA-INTEGRATION.md) for complete Jira setup
 
 ```bash
 export QDRANT_PORT=16333  # Use custom port
-export MEMORY_LOG_LEVEL=DEBUG  # Enable verbose logging
+export AI_MEMORY_LOG_LEVEL=DEBUG  # Enable verbose logging
 ```
 
 ## 💡 Usage

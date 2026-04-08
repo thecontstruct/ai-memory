@@ -116,8 +116,7 @@ class TestScannerOrchestration:
         from memory.security_scanner import SecurityScanner
 
         scanner = SecurityScanner(enable_ner=False)
-        # BUG-110: Force strict session mode so Layer 2 runs (relaxed is now default)
-        monkeypatch.setattr(scanner, "_is_strict_session_mode", lambda: True)
+        # Routing test: verifies Layer 1+2 run for session content (TD-368)
         result = scanner.scan("Clean content")
 
         # Should only execute layers 1 and 2
@@ -341,6 +340,134 @@ class TestLayer1SecretPatterns:
         assert result.content == ""
 
 
+class TestAIEcosystemSecretPatterns:
+    """Test TD-367: AI-ecosystem secret patterns (OpenAI, Anthropic, HuggingFace)."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_detect_secrets(self, monkeypatch):
+        """Isolate AI pattern tests from Layer 2 detect-secrets interference."""
+        monkeypatch.setattr("memory.security_scanner._detect_secrets_available", False)
+
+    def test_openai_key_blocks(self):
+        """Test OpenAI API key detection blocks content."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # OpenAI keys start with sk- and are 20+ chars
+        result = scanner.scan("API key: sk-" + "A" * 48)
+
+        assert result.action == ScanAction.BLOCKED
+        assert result.content == ""
+        assert any(f.finding_type.value == "secret_api_key" for f in result.findings)
+
+    def test_anthropic_key_blocks(self):
+        """Test Anthropic API key detection blocks content."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # Anthropic keys: sk-ant-...
+        result = scanner.scan("Key: sk-ant-api03-" + "A" * 80)
+
+        assert result.action == ScanAction.BLOCKED
+        assert result.content == ""
+        assert any(f.finding_type.value == "secret_api_key" for f in result.findings)
+
+    def test_huggingface_key_blocks(self):
+        """Test HuggingFace API key detection blocks content."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # HuggingFace keys: hf_...
+        result = scanner.scan("HF token: hf_" + "A" * 34)
+
+        assert result.action == ScanAction.BLOCKED
+        assert result.content == ""
+        assert any(f.finding_type.value == "secret_api_key" for f in result.findings)
+
+    # Fix-r2: Boundary and negative tests for AI-ecosystem patterns
+    def test_openai_key_boundary_19_chars_not_blocked(self):
+        """Boundary: sk- + 19 alphanumeric chars should NOT match (threshold is 20)."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # sk- + 19 chars = 22 total, but only 19 alphanumeric after sk-
+        result = scanner.scan("Key: sk-" + "A" * 19)
+
+        # Should NOT be blocked (under 20 char threshold)
+        assert result.action == ScanAction.PASSED
+        assert result.content == "Key: sk-" + "A" * 19
+
+    # Fix-r3: At-threshold boundary test (exactly 20 chars SHOULD be blocked)
+    def test_openai_key_boundary_20_chars_blocked(self):
+        """Boundary: sk- + exactly 20 alphanumeric chars SHOULD match (at threshold)."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # sk- + 20 chars = exactly at threshold
+        result = scanner.scan("Key: sk-" + "A" * 20)
+
+        # SHOULD be blocked (meets 20 char threshold)
+        assert result.action == ScanAction.BLOCKED
+        assert result.content == ""
+        assert any(f.finding_type.value == "secret_api_key" for f in result.findings)
+
+    def test_huggingface_key_boundary_29_chars_not_blocked(self):
+        """Boundary: hf_ + 29 alphanumeric chars should NOT match (threshold is 30)."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # hf_ + 29 chars = 32 total, but only 29 alphanumeric after hf_
+        result = scanner.scan("Token: hf_" + "A" * 29)
+
+        # Should NOT be blocked (under 30 char threshold)
+        assert result.action == ScanAction.PASSED
+        assert result.content == "Token: hf_" + "A" * 29
+
+    def test_short_sk_token_not_blocked(self):
+        """Negative: short sk-token should NOT match."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("Short key: sk-token")
+
+        # Should NOT be blocked (too short)
+        assert result.action == ScanAction.PASSED
+        assert "sk-token" in result.content
+
+    def test_huggingface_dataset_name_not_blocked(self):
+        """Negative: hf_dataset_name in non-key context should NOT match."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("Use dataset hf_dataset_name for training")
+
+        # Should NOT be blocked - "hf_dataset_name" is not a key format
+        assert result.action == ScanAction.PASSED
+        assert "hf_dataset_name" in result.content
+
+    def test_openai_proj_key_blocks(self):
+        """Positive: sk-proj-XXX format (20+ chars) SHOULD match."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("API key: sk-proj-" + "A" * 24)
+
+        assert result.action == ScanAction.BLOCKED
+        assert result.content == ""
+        assert any(f.finding_type.value == "secret_api_key" for f in result.findings)
+
+    def test_openai_svcacct_key_blocks(self):
+        """Positive: sk-svcacct-XXX format (20+ chars) SHOULD match."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("Service key: sk-svcacct-" + "A" * 25)
+
+        assert result.action == ScanAction.BLOCKED
+        assert result.content == ""
+        assert any(f.finding_type.value == "secret_api_key" for f in result.findings)
+
+
 class TestGitHubHandleFalsePositives:
     """Test TD-161: GitHub handle regex false positive fixes."""
 
@@ -414,9 +541,9 @@ class TestScanBatchNER:
 
     def test_batch_force_ner_enables_layer3(self):
         """Test force_ner=True enables Layer 3 in batch."""
-        from memory.security_scanner import SecurityScanner, _spacy_available
+        from memory.security_scanner import SecurityScanner, _load_spacy_model
 
-        if _spacy_available is False:
+        if _load_spacy_model() is None:
             pytest.skip("SpaCy not available")
 
         scanner = SecurityScanner(enable_ner=False)
@@ -434,10 +561,10 @@ class TestScanBatchNER:
         from memory.security_scanner import (
             ScanAction,
             SecurityScanner,
-            _spacy_available,
+            _load_spacy_model,
         )
 
-        if _spacy_available is False:
+        if _load_spacy_model() is None:
             pytest.skip("SpaCy not available")
 
         scanner = SecurityScanner(enable_ner=True)
@@ -531,31 +658,28 @@ class TestSourceTypeAwareness:
         # so it won't actually block, but it will be in layers_executed)
         assert 2 in result.layers_executed
 
-    def test_user_session_runs_layer2_in_strict_mode(self, monkeypatch):
-        """User session content should run Layer 2 scanning in strict mode."""
+    def test_user_session_runs_layer2_in_relaxed_mode(self, monkeypatch):
+        """TD-368: User session content runs Layer 2 in relaxed mode (default)."""
         from memory.security_scanner import SecurityScanner
 
         monkeypatch.setattr("memory.security_scanner._detect_secrets_available", False)
 
         scanner = SecurityScanner(enable_ner=False)
-        # BUG-110: Must set strict mode for Layer 2 to run (relaxed is now default)
-        monkeypatch.setattr(scanner, "_is_strict_session_mode", lambda: True)
         result = scanner.scan("Safe content here", source_type="user_session")
 
+        # TD-368: Session content ALWAYS runs Layer 2 regardless of mode
         assert 2 in result.layers_executed
 
-    def test_default_source_type_runs_all_layers_in_strict_mode(self, monkeypatch):
-        """Default source_type (user_session) in strict mode should run all applicable layers."""
+    def test_default_source_type_runs_layer2(self, monkeypatch):
+        """TD-368: Default source_type (user_session) runs Layer 2."""
         from memory.security_scanner import SecurityScanner
 
         monkeypatch.setattr("memory.security_scanner._detect_secrets_available", False)
 
         scanner = SecurityScanner(enable_ner=False)
-        # BUG-110: Must set strict mode for Layer 2 to run (relaxed is now default)
-        monkeypatch.setattr(scanner, "_is_strict_session_mode", lambda: True)
         result = scanner.scan("Safe content")
 
-        # Default (user_session) in strict mode must include Layer 2
+        # TD-368: user_session ALWAYS runs Layer 2
         assert 2 in result.layers_executed
 
     def test_github_code_blob_skips_layer2_in_relaxed_mode(self, monkeypatch):
@@ -617,41 +741,143 @@ class TestSourceTypeAwareness:
         assert 1 in result.layers_executed
 
 
+class TestGitHubIdContext:
+    """Test TD-415: _is_github_id_context() whitelisting for GitHub platform IDs."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_detect_secrets(self, monkeypatch):
+        """Isolate tests from Layer 2 detect-secrets interference."""
+        monkeypatch.setattr("memory.security_scanner._detect_secrets_available", False)
+
+    def test_run_prefix_whitelists(self):
+        """Test that 'run' prefix whitelists GitHub run IDs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # True positive: should be whitelisted
+        result = scanner.scan("See gh run 23997575319 for details")
+        assert result.action == ScanAction.PASSED
+        assert len(result.findings) == 0
+
+    def test_run_id_prefix_whitelists(self):
+        """Test that 'run_id:' prefix whitelists GitHub run IDs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("run_id: 23997575319")
+        assert result.action == ScanAction.PASSED
+
+    def test_runs_slash_whitelists(self):
+        """Test that 'runs/' prefix whitelists GitHub run IDs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("Check runs/23997575319 status")
+        assert result.action == ScanAction.PASSED
+
+    def test_job_prefix_whitelists(self):
+        """Test that 'job' prefix whitelists GitHub job IDs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("job: 23997575319")
+        assert result.action == ScanAction.PASSED
+
+    def test_jobs_slash_whitelists(self):
+        """Test that 'jobs/' prefix whitelists GitHub job IDs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("jobs/23997575319 failed")
+        assert result.action == ScanAction.PASSED
+
+    def test_workflow_prefix_whitelists(self):
+        """Test that 'workflow' prefix whitelists GitHub workflow IDs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("workflow: 23997575319")
+        assert result.action == ScanAction.PASSED
+
+    def test_workflow_id_prefix_whitelists(self):
+        """Test that 'workflow_id:' prefix whitelists GitHub workflow IDs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("workflow_id: 23997575319")
+        assert result.action == ScanAction.PASSED
+
+    def test_actions_slash_whitelists(self):
+        """Test that 'actions/' prefix whitelists GitHub Actions IDs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("See actions/runs/23997575319")
+        assert result.action == ScanAction.PASSED
+
+    def test_issue_pr_fixes_hash_whitelists(self):
+        """Test that 'issue #', 'PR #', 'fixes #' whitelists numeric refs."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # These should be whitelisted (not phone numbers)
+        for text in ["issue #12345", "PR #45678", "fixes #78901"]:
+            result = scanner.scan(text)
+            assert result.action == ScanAction.PASSED, f"'{text}' should be whitelisted"
+
+    def test_phone_numbers_still_flagged(self):
+        """Test that regular phone numbers are NOT whitelisted."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        # True negatives: must NOT whitelist
+        for text in ["Call me at 5551234567", "phone: 5551234567", "5551234567"]:
+            result = scanner.scan(text)
+            assert (
+                result.action == ScanAction.MASKED
+            ), f"'{text}' should be flagged as PII"
+            assert "[PHONE_REDACTED]" in result.content
+
+    def test_phone_hash_prefix_not_whitelisted(self):
+        """Test F4: 'Phone #5551234567' is NOT whitelisted (bare # removed)."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("Phone #5551234567")
+        # This MUST be flagged as PII - bare # is no longer a safe prefix
+        assert (
+            result.action == ScanAction.MASKED
+        ), "Phone #5551234567 should be flagged as PII"
+        assert "[PHONE_REDACTED]" in result.content
+
+    def test_plain_number_still_flagged(self):
+        """Test that plain 10-digit numbers are still flagged."""
+        from memory.security_scanner import ScanAction, SecurityScanner
+
+        scanner = SecurityScanner(enable_ner=False)
+        result = scanner.scan("The ID is 5551234567")
+        assert result.action == ScanAction.MASKED
+        assert "[PHONE_REDACTED]" in result.content
+
+
 class TestSessionModeAwareness:
     """Test BUG-110: security_scan_session_mode config for session content."""
 
-    def test_session_scanning_relaxed_skips_layer2(self, monkeypatch):
-        """Session content should skip Layer 2 detect-secrets in relaxed mode (default)."""
-        from memory.security_scanner import ScanAction, SecurityScanner
+    def test_session_scanning_relaxed_runs_layer2(self, monkeypatch):
+        """TD-368: Session content runs Layer 2 in relaxed mode.
 
-        monkeypatch.setattr("memory.security_scanner._detect_secrets_available", True)
-        scanner = SecurityScanner(enable_ner=False)
-        # Relaxed mode is default — _is_strict_session_mode returns False
-        monkeypatch.setattr(scanner, "_is_strict_session_mode", lambda: False)
-        monkeypatch.setattr(scanner, "_is_session_scanning_off", lambda: False)
-
-        content = "Configure QDRANT_API_KEY and GITHUB_TOKEN in your environment"
-        result = scanner.scan(content, source_type="user_session")
-
-        # Layer 2 should be skipped in relaxed mode
-        assert 2 not in result.layers_executed
-        # Layer 1 should still run
-        assert 1 in result.layers_executed
-        # Content discussing env var names should not be blocked by L1
-        assert result.action != ScanAction.BLOCKED
-
-    def test_session_scanning_strict_runs_layer2(self, monkeypatch):
-        """Session content should run Layer 2 detect-secrets in strict mode."""
+        Only GitHub content (trusted source) skips Layer 2 in relaxed mode.
+        """
         from memory.security_scanner import SecurityScanner
 
         monkeypatch.setattr("memory.security_scanner._detect_secrets_available", False)
         scanner = SecurityScanner(enable_ner=False)
-        monkeypatch.setattr(scanner, "_is_strict_session_mode", lambda: True)
+        # Ensure session scanning is not disabled
         monkeypatch.setattr(scanner, "_is_session_scanning_off", lambda: False)
 
         result = scanner.scan("Safe content here", source_type="user_session")
 
-        # In strict mode, Layer 2 must run
+        # TD-368: Session content MUST run Layer 2 even in relaxed mode
         assert 2 in result.layers_executed
 
     def test_session_scanning_off_skips_all(self, monkeypatch):
@@ -701,21 +927,47 @@ class TestSessionModeAwareness:
         # Clean up
         reset_config()
 
-    def test_scan_batch_respects_session_mode(self, monkeypatch):
-        """Batch scanning should respect session relaxed mode."""
+    def test_scan_batch_session_runs_layer2(self, monkeypatch):
+        """TD-368: Batch scanning runs Layer 2 for session content."""
         from memory.security_scanner import SecurityScanner
 
-        monkeypatch.setattr("memory.security_scanner._detect_secrets_available", True)
+        monkeypatch.setattr("memory.security_scanner._detect_secrets_available", False)
         scanner = SecurityScanner(enable_ner=False)
-        monkeypatch.setattr(scanner, "_is_strict_session_mode", lambda: False)
+        # Ensure session scanning is not disabled
         monkeypatch.setattr(scanner, "_is_session_scanning_off", lambda: False)
 
         results = scanner.scan_batch(
-            ["Clean text about QDRANT_API_KEY config", "Another safe text"],
+            ["Clean text about config", "Another safe text"],
             source_type="user_session",
         )
 
         assert len(results) == 2
-        # Layer 2 should be skipped for both in relaxed session mode
+        # TD-368: Layer 2 MUST run for session content even in relaxed mode
         for r in results:
-            assert 2 not in r.layers_executed
+            assert 2 in r.layers_executed
+
+    def test_scan_batch_session_runs_layer2_ner_enabled(self, monkeypatch):
+        """Fix-r2: Batch scanning with NER enabled routes session content through NER code path."""
+        from memory.security_scanner import SecurityScanner, _load_spacy_model
+
+        if _load_spacy_model() is None:
+            pytest.skip("SpaCy not available")
+
+        monkeypatch.setattr("memory.security_scanner._detect_secrets_available", False)
+        scanner = SecurityScanner(enable_ner=True)
+        # Ensure session scanning is not disabled
+        monkeypatch.setattr(scanner, "_is_session_scanning_off", lambda: False)
+
+        results = scanner.scan_batch(
+            ["Text about John Smith", "Text about Jane Doe"],
+            source_type="user_session",
+        )
+
+        assert len(results) == 2
+        # Session content MUST run all layers: L1, L2, L3 (NER)
+        for r in results:
+            assert 1 in r.layers_executed
+            assert 2 in r.layers_executed
+            assert 3 in r.layers_executed
+            # NER should have detected names
+            assert any(f.finding_type.value == "pii_name" for f in r.findings)

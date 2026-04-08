@@ -5,7 +5,149 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Multi-IDE Adapter Support
+## [2.3.0] - 2026-04-07
+
+Stabilization, observability, and data integrity release. Includes Langfuse v3-to-v4 SDK migration, security hardening, installer robustness improvements, Docker infrastructure fixes, CI regression gate, and comprehensive documentation accuracy fixes.
+
+### Security
+- **Credential removed from committed settings** (V1-NEW-001): `QDRANT_API_KEY` removed from committed `settings.json`. Added `.gitignore` patterns.
+- **Grafana default password removed** (TD-370): Removed `:-admin` default from `docker-compose.yml`. Installer already generates a secure password.
+- **`qdrant_api_key` converted to `SecretStr`** (V5-NEW-2): Config field converted to `SecretStr | None`. All 9 consumers updated to call `.get_secret_value()`.
+- **Cache key fingerprint** (TD-371): Cache key uses SHA-256[:8] fingerprint instead of raw API key.
+- **SecretStr validation error protection**: `hide_input_in_errors=True` added to `MemoryConfig` model_config. Prevents `SecretStr` values from leaking in plaintext in pydantic `ValidationError` messages.
+- **AI-ecosystem secret patterns** (TD-367): Security scanner Layer 1 regex patterns for OpenAI (`sk-`, `sk-proj-`, `sk-svcacct-`), Anthropic (`sk-ant-`), and HuggingFace (`hf_`) API keys with boundary tests.
+- **Session content now scanned in relaxed mode** (TD-368): Layer 2 (detect-secrets) runs on session content even in relaxed mode. Previously, relaxed mode skipped Layer 2 for both GitHub and session content. Now only GitHub content (trusted source) skips detect-secrets.
+
+### Fixed
+- **Broken Tier 2 injection on fresh installs** (BUG-250, CRITICAL): Installer template registered archived `unified_keyword_trigger.py` instead of `context_injection_tier2.py`. Added deny-list to `_remove_dead_hooks()`.
+- **Orphaned Langfuse traces** (BUG-251, CRITICAL): `CLAUDE_SESSION_ID` not propagated to library module calls. Added `os.environ.setdefault()` in `code_sync.py`, `sync.py`, `agent_sdk_wrapper.py`.
+- **Missing Langfuse stop hook** (BUG-249, CRITICAL): `langfuse_stop_hook.py` registered in dev `settings.json` Stop hooks with guard pattern and 10s timeout.
+- **MinIO bucket not auto-created** (BUG-263, CRITICAL): Langfuse traces silently lost — `Failed to upload JSON to S3: NoSuchBucket`. Added `langfuse-minio-init` one-shot service using `minio/mc` to create the `langfuse` bucket before web/worker start.
+- **MinIO init permission denied** (BUG-264): `minio/mc` failed with `mkdir /root/.mc: permission denied` under `cap_drop: ALL` security hardening. Fixed with `MC_CONFIG_DIR=/tmp`.
+- **Trace data loss via `update_trace()`** (TD-373, HIGH): `update_trace()` removed in Langfuse v4 SDK — fallback silently dropped `session_id`/`user_id`. Replaced with `propagate_attributes()` in trace flush worker and stop hook.
+- **Evaluator 501 on self-hosted** (TD-374, HIGH): `api.observations.get_many()` returns 501 on self-hosted Langfuse ("v2 APIs only available on Langfuse Cloud"). Replaced with `api.legacy.observations_v1.get_many()`.
+- **Hook pipeline traces silently dropped** (TD-372, HIGH): v4 SDK smart span filter only exports spans from `langfuse-sdk`, `gen_ai.*`, and known LLM framework scopes. Custom OTel scope `ai-memory.flush-worker` was silently filtered — all hook pipeline traces were lost. Fixed with composed `should_export_span` filter that keeps v4 defaults + adds `ai-memory.*` scope.
+- **Venv path mismatch** (BUG-253, HIGH): `install.sh` referenced `venv/bin/python3` in 2 locations while the rest of the file used `.venv/bin/python`. Both paths corrected.
+- **Env var consumption outside config** (BUG-254, HIGH): `AI_MEMORY_LOG_LEVEL` and `AI_MEMORY_QUEUE_DIR` consumed via raw `os.getenv()`, bypassing pydantic-settings validation. Consolidated into `MemoryConfig` with `AliasChoices` for backward compat — both prefixed (`AI_MEMORY_*`) and non-prefixed (`LOG_LEVEL`, `QUEUE_DIR`) names work. `BMAD_LOG_LEVEL` deprecated alias preserved.
+- **Stale SessionStart matcher** (BUG-256): Dev `settings.json` had `startup|resume|compact|clear` — corrected to `resume|compact`. `_normalize_session_start_matcher()` now strips both `startup` and `clear`.
+- **Streamlit missing tiktoken + prometheus-client** (BUG-257): Import chain `memory.storage` → `chunking` → `tiktoken` and `memory.metrics_push` → `prometheus_client` crashed Streamlit container. Added both to `docker/streamlit/requirements.txt`.
+- **CI E2E collection init** (BUG-259): Added `github` to the `collections` array in test workflow to match `COLLECTION_NAMES` from `config.py`. Prevents silent test skips.
+- **Regression tests gate** (BUG-260): Removed `continue-on-error: true` from regression test steps. Regression failures now BLOCK merges. Secret-gated conditional skip for fork PRs.
+- **Stale installation paths in docs** (BUG-261): 40 references to `~/.claude-memory/` updated to `~/.ai-memory/` in `docs/RECOVERY.md`.
+- **Wrong env var in docs** (BUG-262): `MEMORY_LOG_LEVEL` corrected to `AI_MEMORY_LOG_LEVEL` in README.md and INSTALL.md.
+- **Langfuse compose project name** (BUG-265): `docker-compose.langfuse.yml` missing `name: ai-memory` — Langfuse containers appeared as separate "docker" project. Added `name: ai-memory` to unify all containers.
+- **Hook stdin hang** (CI fix): `post_tool_capture.py` moved stdin read before network/metrics setup. Empty input exits immediately.
+- **Orphaned profiled services on reinstall** (TD-331): `handle_reinstall()` now reads `MONITORING_ENABLED` and `GITHUB_SYNC_ENABLED` from existing `docker/.env` and passes `--profile` flags to `docker compose down`.
+- **Qdrant auth check before collection setup** (TD-339): Authenticated health check (`GET /collections` with `api-key` header) added after liveness loop, before `setup_qdrant_collections()`. Retries 3 times with 2s backoff.
+- **Qdrant healthcheck TCP to HTTP** (TD-341): Docker Compose healthcheck converted from TCP port probe to HTTP readiness check (`GET /readyz`). Unhealthy detection window reduced from ~100s to ~45s.
+- **Evaluator 25-hour start_period** (TD-345): `start_period: 90000s` (25 hours) corrected to `120s` in `docker-compose.langfuse.yml`.
+- **Unused classifier_queue volume removed** (TD-346): Named volume declared but never mounted by any service. Removed from `docker-compose.yml`.
+- **Placeholder tests replaced with real assertions** (TD-362): `test_confidence_within_3_turns` uses ast.parse verification; `test_metrics_update_with_real_collection` uses Prometheus delta pattern; `test_manual_testing_checklist` deleted and moved to docs.
+- **Langfuse retry tests broken** (TD-372 regression): Updated mocks to target `Langfuse` constructor and `langfuse.span_filter` module after v4 migration.
+- **CI test timeout hardening** (TD-407, TD-412, TD-413): Fixed intermittent CI failures across 18 subprocess-based tests caused by cold-boot import chain latency. Raised subprocess timeouts from 5s to 10-30s.
+- **Stale paths in scripts and tests** (TD-434, TD-435): 9 `~/.claude-memory` references updated to `~/.ai-memory` across scripts and tests.
+- **MAX_RETRIEVALS default wrong in docs** (TD-437, TD-438): Corrected from `5` to `10` in `docs/HOOKS.md` and `aim-settings/SKILL.md`.
+- **Nonexistent env var in docs** (TD-439): `MEMORY_MAX_RETRIEVALS` corrected to `MAX_RETRIEVALS` in `TROUBLESHOOTING.md`.
+- **Mixed units in docs** (TD-440): `~1.3 GB` standardized to `~1.3 GiB` in `docs/LANGFUSE-INTEGRATION.md`.
+- **RAM contradiction in docs** (TD-369): INSTALL.md RAM requirements made consistent.
+- **detect-secrets false positives on natural language** (BP-151): Security scanner Layer 2 used `default_settings()` which flagged English words as Base64. Replaced with `transient_settings()` using pattern-only detectors for user session content.
+- **health_check.sh container detection** (Docker Compose v5): Container status checks grepped for `"running"` but Compose v5 shows `"Up ... (healthy)"`. Changed to grep for `"Up"`.
+- **Excessive Qdrant scroll traffic on large repos** ([#102](https://github.com/Hidden-History/ai-memory/issues/102)): `_update_last_synced()` performed O(n) scroll+set_payload per unchanged file every sync cycle. Replaced with `_batch_update_last_synced()` using `MatchAny` filter — single scroll + chunked set_payload (500 IDs/batch). Reduces sync-cycle Qdrant load from O(tracked_files) to O(1) for metadata updates.
+
+### Added
+- **Storage tracing** (TD-317): `emit_trace_event` calls added to all 5 storage entry points (`store_memory`, `store_memories_batch`, `store_github_code_blob_chunks_batch`, `store_agent_memory`, `store_best_practice`) with start/end timing, tags, and project_id.
+- **Retriever observation type** (TD-323): Search spans now emit `as_type="retriever"` for proper Langfuse dashboard categorization.
+- **@observe prohibition documented** (TD-325): Architecture note added to `injection.py`, `search.py`, `embeddings.py` headers documenting why `@observe` must not be used in hook-called modules.
+- **Zero-vector validation** (TD-354): Embedding responses validated for degenerate all-zero vectors. Raises `EmbeddingError` in single-embed path; defense-in-depth check in batch path.
+- **Session summary agent_id** (BUG-258): `agent_id` field added to `pre_compact_save.py` for Parzival tenant isolation of session summaries.
+- **Read-only Qdrant API key** (TD-333): `qdrant_read_only_api_key: SecretStr | None` field in `MemoryConfig`. `get_qdrant_client(read_only=True)` prefers the read-only key, falls back to the read-write key. Supports Qdrant's native read-only key feature (v1.7+).
+- **CI schema parity guard**: New `tests/test_ci_schema_parity.py` asserts set-equality between CI fixture collections and code-defined `COLLECTION_NAMES`. Catches future drift between code and CI.
+
+### Changed
+- **Langfuse SDK v3 to v4** (LANGFUSE-4X): Upgraded from `langfuse>=3.0,<4.0.0` to `langfuse>=4.0.0,<4.1.0`. Metadata values converted to strings for v4 compliance. `propagate_attributes()` replaces `update_trace()`. LANGFUSE-INTEGRATION-SPEC.md updated to v1.3.
+- **Tag standardization** (TD-326, TD-376): `emit_trace_event` tags changed from `"trigger"` to `"code_change"` in 15 call sites across storage and hook scripts.
+- **V3 to V4 SDK comment headers** (TD-377): Updated 9 source files from `# LANGFUSE: V3 ONLY` to `# LANGFUSE: V4 SDK`.
+- **`AI_MEMORY_INSTALL_DIR` force-updated on merge** (TD-334): `merge_settings.py` now force-updates from hooks directory path, preventing stale install paths.
+- **DRY hook utilities** (TD-338): Extracted shared functions to `scripts/hook_utils.py`. All 3 consumers (`generate_settings.py`, `merge_settings.py`, `recover_hook_guards.py`) import from it.
+- **Robust matcher normalization** (BUG-078 hardening): Upgraded from exact-string match to frozenset-based approach. Scope-restricted to AI Memory hooks only.
+- **Queue dir tilde + env var expansion** (TD-340): Validator now applies both `expanduser()` and `expandvars()`.
+- **.env.example audit** (TD-340): All env vars verified against actual consumers. `QDRANT_READ_ONLY_API_KEY` documented.
+- **Standardize Python base image** (TD-343): All 6 Dockerfiles now use `python:3.12-slim`.
+- **Remove dead Dockerfile HEALTHCHECK instructions** (TD-349): Removed from 3 Dockerfiles — Docker Compose healthchecks are authoritative.
+- **Document UID/GID env vars** (TD-344): Added to `.env.example` Section 6 (Container Identity).
+- **Coverage config**: Extended `pyproject.toml` coverage source to include hook scripts and memory scripts. Excluded archived scripts from measurement.
+
+### Upgrade Instructions
+
+**From v2.2.8 to v2.3.0:**
+
+1. **Pull the latest release:**
+   ```bash
+   cd /path/to/ai-memory
+   git fetch origin && git checkout main && git pull
+   ```
+
+2. **Run the installer** (Option 1 for existing installations):
+   ```bash
+   ./scripts/install.sh /path/to/your/project
+   # Select: Option 1 — Add project to existing installation
+   ```
+
+3. **Rebuild containers** (code is baked into Docker images, not volume-mounted):
+   ```bash
+   cd ~/.ai-memory/docker
+   unset QDRANT_API_KEY
+   docker compose build --no-cache github-sync streamlit embedding monitoring-api classifier-worker
+   docker compose -f docker-compose.langfuse.yml build --no-cache trace-flush-worker evaluator-scheduler
+   ```
+
+4. **Restart the full stack:**
+   ```bash
+   cd ~/.ai-memory/docker
+   unset QDRANT_API_KEY
+   bash ../scripts/stack.sh restart
+   ```
+   Wait ~60 seconds for all services to reach healthy state.
+
+   If upgrading from v2.2.x with the old Langfuse project name bug (BUG-265), first clean up the orphaned stack:
+   ```bash
+   docker compose -p docker -f docker-compose.langfuse.yml --profile langfuse down
+   ```
+
+5. **Verify:**
+   ```bash
+   # Health check (all services)
+   bash ~/.ai-memory/scripts/memory/health_check.sh
+
+   # Verify all 17 containers healthy (all should show "Up ... (healthy)")
+   cd ~/.ai-memory/docker && docker compose ps -a
+
+   # Verify 5 collections intact
+   source ~/.ai-memory/docker/.env
+   curl -sf -H "api-key: $QDRANT_API_KEY" http://localhost:26350/collections | python3 -m json.tool
+   ```
+
+**Important notes:**
+- Always `unset QDRANT_API_KEY` before running `docker compose` commands. Shell env vars override `.env` file values, causing auth mismatches.
+- The `github-sync` container has Python code baked into its Docker image. A rebuild is required after every code update.
+- Run `docker compose` from `~/.ai-memory/docker/`, never from the source repo clone.
+
+**Upgrade notes:**
+- The `langfuse-minio-init` service is a one-shot container that creates the S3 bucket and exits. It runs before `langfuse-web` and `langfuse-worker` via `depends_on: service_completed_successfully`.
+- `propagate_attributes()` replaces `update_trace()` (removed in Langfuse v4). If you have custom hooks that called `update_trace()`, migrate to `propagate_attributes(trace_name=..., session_id=..., user_id=..., metadata=..., tags=...)`.
+- The evaluator now uses `api.legacy.observations_v1.get_many()` — this is the correct namespace for self-hosted Langfuse instances.
+- The `trace-flush-worker` container must be rebuilt for hook pipeline traces to appear in Langfuse. Without this, the v4 smart span filter silently drops all `ai-memory.*` scoped spans.
+- `hook_utils.py` is a new shared module — the installer copies it automatically.
+- If you previously hand-edited `.claude/settings.json` matchers with `startup` or `clear`, they will be automatically cleaned on next `merge_settings.py` run.
+- The authenticated Qdrant health check runs during fresh installs and reinstalls. If your Qdrant instance does not use an API key, the check is skipped with a warning.
+- `AI_MEMORY_LOG_LEVEL`, `LOG_LEVEL`, and `BMAD_LOG_LEVEL` all set the log level. Priority: `AI_MEMORY_LOG_LEVEL` > `LOG_LEVEL` > `BMAD_LOG_LEVEL` (deprecated).
+- `QDRANT_READ_ONLY_API_KEY` is optional. If not set, all Qdrant operations use the regular `QDRANT_API_KEY`.
+- **Langfuse project unification** (BUG-265): After upgrade, you must stop the Langfuse stack using the old project name (`docker compose -p docker -f docker-compose.langfuse.yml down`) before restarting. Otherwise, orphaned containers from the old "docker" project will remain alongside the new "ai-memory" project containers.
+
+---
+
+
+## [2.2.8] - 2026-03-30 — Multi-IDE Adapter Support
 
 Adds native lifecycle hook support for Gemini CLI, Cursor IDE, and Codex CLI alongside existing Claude Code integration. All four IDEs share the same memory pipeline through a canonical event schema — memories created in one IDE are available in all others.
 

@@ -520,7 +520,7 @@ Based on working reference architecture (`ai-memory-qdrant-knowledge-management`
 
 4. Enable hook logging:
    ```bash
-   export MEMORY_LOG_LEVEL=DEBUG
+   export AI_MEMORY_LOG_LEVEL=DEBUG
    # Logs will appear in ~/.ai-memory/logs/hook.log
    tail -f ~/.ai-memory/logs/hook.log
    ```
@@ -1148,7 +1148,7 @@ echo -e "\n=== Verification Complete ==="
 **Quick Optimizations:**
 ```bash
 # Reduce retrievals (fewer memories = faster)
-export MEMORY_MAX_RETRIEVALS=3
+export MAX_RETRIEVALS=3
 
 # Increase threshold (fewer low-relevance results)
 export MEMORY_SIMILARITY_THRESHOLD=0.7
@@ -1288,7 +1288,7 @@ See [CONFIGURATION.md - Port Mapping](docs/CONFIGURATION.md#docker-configuration
 
 ```bash
 # Set environment variable
-export MEMORY_LOG_LEVEL=DEBUG
+export AI_MEMORY_LOG_LEVEL=DEBUG
 
 # Restart Claude Code session
 # Logs will be verbose in ~/.ai-memory/logs/
