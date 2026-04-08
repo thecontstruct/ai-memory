@@ -21,10 +21,12 @@ import time
 from datetime import datetime, timezone
 
 from qdrant_client.models import (
+    Direction,
     FieldCondition,
     Filter,
     Fusion,
     FusionQuery,
+    OrderBy,
     MatchAny,
     MatchValue,
     Prefetch,
@@ -1126,7 +1128,7 @@ class MemorySearch:
                     Filter(must=filter_conditions) if filter_conditions else None
                 ),
                 limit=limit,
-                order_by={"key": "timestamp", "direction": "desc"},
+                order_by=OrderBy(key="timestamp", direction=Direction.DESC),
                 with_payload=True,
                 with_vectors=False,
             )

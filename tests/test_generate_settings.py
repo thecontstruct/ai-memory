@@ -200,6 +200,20 @@ def test_generate_hook_config_absolute_paths():
                 assert "$AI_MEMORY_INSTALL_DIR" in hook["command"]
 
 
+def test_generate_hook_config_service_defaults():
+    """Generated env defaults must target local host ports and IPv4 embedding."""
+    from generate_settings import generate_hook_config
+
+    config = generate_hook_config("/absolute/path/to/hooks", "test-project")
+    env = config["env"]
+
+    assert env["QDRANT_HOST"] == "localhost"
+    assert env["QDRANT_PORT"] == "26350"
+    assert env["QDRANT_GRPC_PORT"] == "26351"
+    assert env["EMBEDDING_HOST"] == "127.0.0.1"
+    assert env["EMBEDDING_PORT"] == "28080"
+
+
 def test_main_creates_file(tmp_path):
     """Test main() function creates settings.json file."""
     from generate_settings import main

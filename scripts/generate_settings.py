@@ -71,7 +71,8 @@ def generate_hook_config(hooks_dir: str, project_name: str) -> dict:
         # Service configuration - read from environment, fall back to defaults per CLAUDE.md
         "QDRANT_HOST": os.environ.get("QDRANT_HOST", "localhost"),
         "QDRANT_PORT": os.environ.get("QDRANT_PORT", "26350"),
-        "EMBEDDING_HOST": os.environ.get("EMBEDDING_HOST", "localhost"),
+        "QDRANT_GRPC_PORT": os.environ.get("QDRANT_GRPC_PORT", "26351"),
+        "EMBEDDING_HOST": os.environ.get("EMBEDDING_HOST", "127.0.0.1"),
         "EMBEDDING_PORT": os.environ.get("EMBEDDING_PORT", "28080"),
         # TECH-DEBT-002: Lower threshold for NL query → code content matching
         "SIMILARITY_THRESHOLD": os.environ.get("SIMILARITY_THRESHOLD", "0.4"),
