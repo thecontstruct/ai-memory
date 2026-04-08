@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-memory"
-version = "2.2.7"
+version = "2.3.0"
 description = "AI Memory Module - Vector-based memory system for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -65,7 +65,7 @@ dependencies = [
 [project.optional-dependencies]
 observability = [
     # LLM Observability — Langfuse tracing (SPEC-020, PLAN-008)
-    "langfuse>=3.0,<4.0.0",
+    "langfuse>=4.0.0,<4.1.0",
 ]
 dev = [
     # Testing
@@ -97,7 +97,9 @@ dev = [
     # YAML parsing (required by tests/unit/test_sops_encryption.py)
     "PyYAML>=6.0,<7.0",
     # Include observability deps so CI has langfuse for tests
-    "langfuse>=3.0,<4.0.0",
+    "langfuse>=4.0.0,<4.1.0",
+    # Streamlit dashboard (CI validation of docker/streamlit/app.py)
+    "streamlit==1.54.0",
 ]
 
 [project.urls]
@@ -136,12 +138,18 @@ markers = [
 
 # Coverage configuration
 [tool.coverage.run]
-source = ["src/memory"]
+source = [
+    "src/memory",
+    ".claude/hooks/scripts",
+    "scripts/memory",
+]
 branch = true
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
     "*/conftest.py",
+    "*/_archived/*",
+    "*/archived/*",
 ]
 
 [tool.coverage.report]
@@ -165,8 +173,9 @@ line-length = 88
 exclude = [".git", ".venv", "__pycache__", "build", "dist"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM", "RUF"]
+select = ["E", "W", "F", "B", "C4", "UP", "SIM", "RUF"]
 ignore = ["E501"]  # Line length handled by black
+# Note: "I" (isort) removed — CI runs standalone isort which conflicts with ruff's I001 on aliased imports
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG"]

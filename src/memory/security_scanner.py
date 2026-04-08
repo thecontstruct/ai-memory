@@ -30,6 +30,32 @@ _spacy_available = None
 _detect_secrets_available = None
 _detect_secrets_scan_line = None
 _detect_secrets_default_settings = None
+_detect_secrets_transient_settings = None
+
+# Pattern-based detectors only — no entropy plugins (BP-151).
+# Entropy plugins (Base64/HexHighEntropyString) produce false positives
+# on natural language text. Layer 1 regex catches prefix-anchored secrets.
+_DETECT_SECRETS_SESSION_CONFIG = {
+    "plugins_used": [
+        {"name": "ArtifactoryDetector"},
+        {"name": "AWSKeyDetector"},
+        {"name": "AzureStorageKeyDetector"},
+        {"name": "BasicAuthDetector"},
+        {"name": "CloudantDetector"},
+        {"name": "GitHubTokenDetector"},
+        {"name": "IbmCloudIamDetector"},
+        {"name": "IbmCosHmacDetector"},
+        {"name": "JwtTokenDetector"},
+        {"name": "MailchimpDetector"},
+        {"name": "NpmDetector"},
+        {"name": "PrivateKeyDetector"},
+        {"name": "SlackDetector"},
+        {"name": "SoftlayerDetector"},
+        {"name": "SquareOAuthDetector"},
+        {"name": "StripeDetector"},
+        {"name": "TwilioKeyDetector"},
+    ],
+}
 
 
 class ScanAction(str, Enum):
@@ -152,6 +178,32 @@ SECRET_PATTERNS = {
         FindingType.SECRET_TOKEN,
         0.90,
     ),
+    # AI-ecosystem secret patterns (TD-367, Fix-r2)
+    "openai_keys": (
+        r"sk-[A-Za-z0-9]{20,}",
+        FindingType.SECRET_API_KEY,
+        0.95,
+    ),
+    "openai_proj_keys": (
+        r"sk-proj-[A-Za-z0-9_-]{20,}",
+        FindingType.SECRET_API_KEY,
+        0.95,
+    ),
+    "openai_svcacct_keys": (
+        r"sk-svcacct-[A-Za-z0-9_-]{20,}",
+        FindingType.SECRET_API_KEY,
+        0.95,
+    ),
+    "anthropic_keys": (
+        r"sk-ant-[A-Za-z0-9_-]{20,}",
+        FindingType.SECRET_API_KEY,
+        0.95,
+    ),
+    "huggingface_keys": (
+        r"hf_[A-Za-z0-9]{30,}",
+        FindingType.SECRET_API_KEY,
+        0.93,
+    ),
 }
 
 
@@ -166,6 +218,47 @@ def _luhn_check(card_number: str) -> bool:
                 digit -= 9
         checksum += digit
     return checksum % 10 == 0
+
+
+def _is_github_id_context(content: str, start: int, end: int) -> bool:
+    """Check if a phone-like numeric match is actually a GitHub platform ID.
+
+    TD-415: GitHub CI run IDs, job IDs, and similar numeric identifiers
+    match the PII_PHONE regex (10-11 consecutive digits). This function
+    checks the preceding context to whitelist known non-PII patterns.
+
+    Safe prefixes (case-insensitive):
+    - "run " or "run_id " or "runs/" — GitHub Actions run IDs
+    - "job " or "job/" or "jobs/" — GitHub Actions job IDs
+    - "issue #", "PR #", "fixes #" — GitHub issue/PR refs (context-qualified)
+    - "workflow " or "workflow_id " — GitHub workflow IDs
+
+    Args:
+        content: Full content string being scanned.
+        start: Start index of the matched numeric sequence.
+        end: End index of the matched numeric sequence.
+
+    Returns:
+        True if the match appears to be a GitHub platform ID, False otherwise.
+    """
+    # Extract context before the match (up to 30 chars for prefix detection)
+    prefix_window = content[max(0, start - 30) : start].lower()
+
+    # GitHub Actions run/job IDs typically appear after these prefixes
+    # Pattern allows for separators like ':', '/', or whitespace after the keyword
+    safe_prefixes = [
+        r"\brun\b[:\s]*",  # "run 23997575319" or "run: 123"
+        r"\brun_id\b[:\s]*",  # "run_id: 23997575319"
+        r"\bruns/",  # "runs/23997575319"
+        r"\bjob\b[:\s]*",  # "job 23997575319" or "job: 123"
+        r"\bjobs/",  # "jobs/23997575319"
+        r"\bworkflow\b[:\s]*",  # "workflow 23997575319" or "workflow: 123"
+        r"\bworkflow_id\b[:\s]*",  # "workflow_id: 23997575319"
+        r"actions/",  # "actions/runs/..."
+        r"\b(?:issue|pr|pull|fix(?:es)?)\s*#",  # "issue #123", "PR #456", "fixes #789"
+    ]
+
+    return any(re.search(pattern + r"$", prefix_window) for pattern in safe_prefixes)
 
 
 def _mask_for_audit_log(text: str) -> str:
@@ -211,6 +304,12 @@ def _scan_layer1_regex(content: str) -> tuple[list[ScanFinding], bool]:
             if finding_type == FindingType.PII_CC and not _luhn_check(match.group(0)):
                 continue
 
+            # TD-415: Skip PII_PHONE matches that are GitHub platform IDs
+            if finding_type == FindingType.PII_PHONE and _is_github_id_context(
+                content, match.start(), match.end()
+            ):
+                continue
+
             findings.append(
                 ScanFinding(
                     finding_type=finding_type,
@@ -233,7 +332,7 @@ def _scan_layer1_regex(content: str) -> tuple[list[ScanFinding], bool]:
 
 def _load_detect_secrets():
     """Lazy load detect-secrets (called on first Layer 2 scan)."""
-    global _detect_secrets_available, _detect_secrets_scan_line, _detect_secrets_default_settings
+    global _detect_secrets_available, _detect_secrets_scan_line, _detect_secrets_default_settings, _detect_secrets_transient_settings
 
     if _detect_secrets_available is False:
         return False
@@ -243,10 +342,11 @@ def _load_detect_secrets():
 
     try:
         from detect_secrets.core.scan import scan_line
-        from detect_secrets.settings import default_settings
+        from detect_secrets.settings import default_settings, transient_settings
 
         _detect_secrets_scan_line = scan_line
         _detect_secrets_default_settings = default_settings
+        _detect_secrets_transient_settings = transient_settings
         _detect_secrets_available = True
         return True
     except ImportError:
@@ -255,8 +355,15 @@ def _load_detect_secrets():
         return False
 
 
-def _scan_layer2_detect_secrets(content: str) -> tuple[list[ScanFinding], bool]:
+def _scan_layer2_detect_secrets(
+    content: str, source_type: str = ""
+) -> tuple[list[ScanFinding], bool]:
     """Layer 2: detect-secrets entropy scanning.
+
+    Args:
+        content: Text content to scan.
+        source_type: Origin of content (e.g., "user_session", "github_code_blob").
+                     For user_session, uses pattern-only config without entropy plugins.
 
     Returns:
         (findings, has_secrets) tuple
@@ -268,7 +375,12 @@ def _scan_layer2_detect_secrets(content: str) -> tuple[list[ScanFinding], bool]:
         return findings, has_secrets
 
     try:
-        with _detect_secrets_default_settings():
+        settings_ctx = (
+            _detect_secrets_transient_settings(_DETECT_SECRETS_SESSION_CONFIG)
+            if source_type == "user_session"
+            else _detect_secrets_default_settings()
+        )
+        with settings_ctx:
             for _line_number, line in enumerate(content.splitlines(), start=1):
                 for secret in _detect_secrets_scan_line(line):
                     # Map detect-secrets type to our FindingType
@@ -542,18 +654,20 @@ class SecurityScanner:
             _log_scan_result(result, content, source_type)
             return result
 
-        # Source-type-aware scanning (BP-090, RISK-001 fix, BUG-110)
+        # Source-type-aware scanning (BP-090, RISK-001 fix)
         # For GitHub content in relaxed mode, skip Layer 2 (detect-secrets)
         # to avoid false positives on code variable names and hex strings.
-        # For session content in relaxed mode, also skip Layer 2 to avoid
-        # false positives when discussing API keys/tokens in workspace context.
+        # TD-368: Session content should NOT skip Layer 2 even in relaxed mode.
+        # Only GitHub content (trusted source) skips detect-secrets.
         skip_layer2 = (
             source_type.startswith("github_") and not self._is_strict_github_mode()
-        ) or (source_type == "user_session" and not self._is_strict_session_mode())
+        )
 
         # Layer 2: detect-secrets (skipped for trusted sources in relaxed mode)
         if not skip_layer2:
-            layer2_findings, has_secrets_l2 = _scan_layer2_detect_secrets(content)
+            layer2_findings, has_secrets_l2 = _scan_layer2_detect_secrets(
+                content, source_type=source_type
+            )
             all_findings.extend(layer2_findings)
             layers_executed.append(2)
 
@@ -609,15 +723,6 @@ class SecurityScanner:
         except Exception:
             return False
 
-    def _is_strict_session_mode(self) -> bool:
-        """Check if session scanning is set to strict mode."""
-        try:
-            from memory.config import get_config
-
-            return get_config().security_scan_session_mode == "strict"
-        except Exception:
-            return False  # Default to relaxed if config unavailable
-
     def _is_session_scanning_off(self) -> bool:
         """Check if session scanning is completely disabled."""
         try:
@@ -658,10 +763,12 @@ class SecurityScanner:
         pre_results = []
         ner_candidates = []  # texts that need L3
 
-        # Source-type-aware scanning (BP-090, RISK-001 fix, BUG-110)
+        # Source-type-aware scanning (BP-090, RISK-001 fix)
+        # TD-368: Session content should NOT skip Layer 2 even in relaxed mode.
+        # Only GitHub content (trusted source) skips detect-secrets.
         skip_layer2 = (
             source_type.startswith("github_") and not self._is_strict_github_mode()
-        ) or (source_type == "user_session" and not self._is_strict_session_mode())
+        )
 
         # Hoist config checks out of per-text loop (code review fix)
         github_scanning_off = self._is_github_scanning_off()
@@ -721,7 +828,9 @@ class SecurityScanner:
 
             # Layer 2: detect-secrets (skipped for trusted sources in relaxed mode)
             if not skip_layer2:
-                l2_findings, has_secrets_l2 = _scan_layer2_detect_secrets(text)
+                l2_findings, has_secrets_l2 = _scan_layer2_detect_secrets(
+                    text, source_type=source_type
+                )
                 all_findings.extend(l2_findings)
                 layers_executed.append(2)
 

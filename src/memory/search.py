@@ -10,7 +10,7 @@ Best Practices (2025/2026):
 """
 
 # LANGFUSE: Uses trace buffer (Path A). See LANGFUSE-INTEGRATION-SPEC.md §3.1, §4
-# SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
+# SDK VERSION: V4. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
 import contextlib
@@ -73,6 +73,12 @@ __all__ = [
 ]
 
 logger = logging.getLogger("ai_memory.retrieve")
+
+# ARCHITECTURE NOTE: Do NOT add @observe decorator to functions in this module.
+# These functions are called from hook scripts (OS subprocess boundaries) and Docker
+# services. @observe creates orphaned Langfuse traces when OTel context doesn't cross
+# process boundaries. Use emit_trace_event() with explicit session_id instead.
+# See LANGFUSE-INTEGRATION-SPEC.md §4.3
 
 
 def format_attribution(
@@ -726,6 +732,7 @@ class MemorySearch:
                     start_time=_trace_start,
                     end_time=_trace_end,
                     tags=["search", "retrieval"],
+                    as_type="retriever",
                 )
             except Exception:
                 pass
@@ -1341,6 +1348,7 @@ class MemorySearch:
                     start_time=_trace_start,
                     end_time=_trace_end,
                     tags=["search", "retrieval"],
+                    as_type="retriever",
                 )
             except Exception:
                 pass
@@ -1471,6 +1479,7 @@ class MemorySearch:
                         start_time=_trace_start,
                         end_time=_trace_end,
                         tags=["search", "retrieval"],
+                        as_type="retriever",
                     )
                 except Exception:
                     pass
@@ -1562,6 +1571,7 @@ class MemorySearch:
                     start_time=_trace_start,
                     end_time=_trace_end,
                     tags=["search", "retrieval"],
+                    as_type="retriever",
                 )
             except Exception:
                 pass

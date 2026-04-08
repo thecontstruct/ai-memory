@@ -20,7 +20,6 @@ Sources:
 # SDK VERSION: V3 ONLY. Do NOT use Langfuse() constructor, start_span(), or start_generation().
 # CONSTANT: TRACE_CONTENT_MAX = 10000 (no other value permitted)
 
-import hashlib
 import json
 import logging
 import os
@@ -433,7 +432,7 @@ def _fork_fix_to_background_from_post_tool(
                     },
                     trace_id=uuid.uuid4().hex,
                     session_id=session_id,
-                    tags=["capture", "trigger"],
+                    tags=["capture", "code_change"],
                 )
             except Exception:
                 pass
@@ -471,6 +470,34 @@ def main() -> int:
     """
     import contextlib
 
+    # Early stdin read — before any network calls or heavy imports.
+    # Prevents hangs when stdin is empty or malformed (AC 2.5.3).
+    raw_input = sys.stdin.read()
+    if not raw_input or not raw_input.strip():
+        return 0  # Empty input — nothing to process
+
+    try:
+        hook_input = json.loads(raw_input)
+    except json.JSONDecodeError as e:
+        logger.error(
+            "malformed_json",
+            extra={"error": str(e), "input_preview": raw_input[:100]},
+        )
+        return 0  # Non-blocking - Claude continues
+
+    # AC 2.1.3: Validate schema
+    validation_error = validate_hook_input(hook_input)
+    if validation_error:
+        logger.info(
+            "validation_failed",
+            extra={
+                "reason": validation_error,
+                "tool_name": hook_input.get("tool_name"),
+                "tool_status": hook_input.get("tool_status"),
+            },
+        )
+        return 0  # Non-blocking - graceful handling
+
     # TECH-DEBT-142: Late import of push metrics after sys.path is configured
     track_hook_duration_func = None
     detect_project_func = None
@@ -500,32 +527,6 @@ def main() -> int:
 
     with cm:
         try:
-            # Read hook input from stdin (Claude Code convention)
-            raw_input = sys.stdin.read()
-
-            # AC 2.1.3: Handle malformed JSON (FR34)
-            try:
-                hook_input = json.loads(raw_input)
-            except json.JSONDecodeError as e:
-                logger.error(
-                    "malformed_json",
-                    extra={"error": str(e), "input_preview": raw_input[:100]},
-                )
-                return 0  # Non-blocking - Claude continues
-
-            # AC 2.1.3: Validate schema
-            validation_error = validate_hook_input(hook_input)
-            if validation_error:
-                logger.info(
-                    "validation_failed",
-                    extra={
-                        "reason": validation_error,
-                        "tool_name": hook_input.get("tool_name"),
-                        "tool_status": hook_input.get("tool_status"),
-                    },
-                )
-                return 0  # Non-blocking - graceful handling
-
             # TECH-DEBT-010: Extract content and log to activity before fork
             tool_name = hook_input.get("tool_name", "")
             tool_input = hook_input.get("tool_input", {})
@@ -623,7 +624,7 @@ def main() -> int:
                             if detect_project_func
                             else None
                         ),
-                        tags=["capture", "trigger"],
+                        tags=["capture", "code_change"],
                         start_time=capture_start,
                         end_time=datetime.now(tz=timezone.utc),
                     )

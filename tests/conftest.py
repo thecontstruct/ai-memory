@@ -19,7 +19,7 @@ import os
 import socket
 import sys
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -803,6 +803,52 @@ def wait_for_qdrant_healthy(timeout: int = 60) -> None:
         interval_index += 1
 
     raise TimeoutError(f"Qdrant did not become healthy within {timeout}s after restart")
+
+
+def wait_for_condition(
+    condition_fn: Callable[[], bool],
+    timeout: float = 30.0,
+    poll_interval: float = 0.5,
+    message: str = "Condition not met",
+) -> None:
+    """Poll for condition with timeout - TD-363 helper for flaky test fixes.
+
+    Replaces long unconditional time.sleep() calls with polling patterns that
+    fail fast when the condition is met, improving test reliability and speed.
+
+    Args:
+        condition_fn: Callable that returns True when condition is met
+        timeout: Maximum seconds to wait (default 30s)
+        poll_interval: Seconds between polls (default 0.5s)
+        message: Error message prefix for TimeoutError
+
+    Raises:
+        TimeoutError: If condition not met within timeout
+
+    Example:
+        # Before: time.sleep(60)  # Wait for embedding
+        # After:
+        wait_for_condition(
+            lambda: memory_exists_in_qdrant(memory_id),
+            timeout=60.0,
+            message="Memory not found in Qdrant"
+        )
+    """
+    last_exc: Exception | None = None
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            if condition_fn():
+                return
+        except Exception as e:
+            last_exc = e
+        time.sleep(poll_interval)
+
+    elapsed = time.time() - start
+    msg = f"{message} within {timeout}s (waited {elapsed:.1f}s)"
+    if last_exc:
+        msg += f" (last error: {last_exc})"
+    raise TimeoutError(msg)
 
 
 # Edge case test content patterns for cleanup (TECH-DEBT-024 fix)

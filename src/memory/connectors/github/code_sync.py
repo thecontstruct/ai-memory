@@ -29,7 +29,7 @@ from memory.config import (
 )
 
 # LANGFUSE: Uses direct SDK (Path B). See LANGFUSE-INTEGRATION-SPEC.md §3.2, §7.3
-# SDK VERSION: V3 ONLY. Use get_client(), observe(), propagate_attributes().
+# SDK VERSION: V4. Use get_client(), observe(), propagate_attributes().
 # Do NOT use Langfuse() constructor, start_span(), start_generation(), or langfuse_context.
 
 # Langfuse @observe() + propagate_attributes — conditional import (graceful degradation)
@@ -709,6 +709,11 @@ class CodeBlobSync:
         """
         self.client = client
         self.config = config or get_config()
+        # BUG-251: Synthetic session ID for service contexts that lack CLAUDE_SESSION_ID
+        os.environ.setdefault(
+            "CLAUDE_SESSION_ID",
+            f"github-code-sync-{datetime.now(timezone.utc).date().isoformat()}",
+        )
         self.storage = MemoryStorage(self.config)
         self.qdrant = get_qdrant_client(self.config)
         self._group_id = repo or self.config.github_repo
@@ -806,6 +811,7 @@ class CodeBlobSync:
                 eligible_entries: list[tuple[dict, str | None]] = (
                     []
                 )  # (entry, stored_hash)
+                unchanged_paths: list[str] = []
                 for entry in tree_entries:
                     file_path = entry["path"]
                     current_paths.add(file_path)
@@ -816,7 +822,7 @@ class CodeBlobSync:
 
                     stored_hash = stored_map.get(file_path)
                     if stored_hash == entry["sha"]:
-                        await asyncio.to_thread(self._update_last_synced, file_path)
+                        unchanged_paths.append(file_path)
                         result.files_skipped += 1
                         continue
 
@@ -1027,6 +1033,20 @@ class CodeBlobSync:
                         await _cancel_pending("after circuit breaker opened")
                         _record_circuit_breaker_open()
                         break
+
+                if unchanged_paths:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self._batch_update_last_synced, unchanged_paths
+                            ),
+                            timeout=30.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "Batch last_synced update timed out after 30s for %d files",
+                            len(unchanged_paths),
+                        )
 
                 # Step 5: Detect deleted files
                 deleted = await self._detect_deleted_files(
@@ -1344,6 +1364,7 @@ class CodeBlobSync:
             logger.warning("Failed to build blob lookup map: %s", e)
             return {}
 
+    # Retained for backward compat — primary sync path now uses _batch_update_last_synced
     def _update_last_synced(self, file_path: str) -> None:
         """Update last_synced for unchanged file blobs.
 
@@ -1400,6 +1421,84 @@ class CodeBlobSync:
                 )
         except Exception as e:
             logger.warning("Failed to update last_synced for %s: %s", file_path, e)
+
+    def _batch_update_last_synced(self, file_paths: list[str]) -> None:
+        """Batch update last_synced for multiple unchanged file blobs.
+
+        Replaces O(n) per-file scroll+set_payload with a single scroll
+        (using MatchAny filter) and a single set_payload call across all
+        matched point IDs.
+
+        Args:
+            file_paths: List of file paths whose last_synced should be updated.
+        """
+        if not file_paths:
+            return
+        try:
+            logger.info(
+                "Batch updating last_synced for %d unchanged files", len(file_paths)
+            )
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            # Collect all point IDs via paginated scroll with MatchAny filter
+            offset = None
+            all_point_ids = []
+            while True:
+                points, next_offset = self.qdrant.scroll(
+                    collection_name=GITHUB_COLLECTION,
+                    scroll_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="group_id",
+                                match=models.MatchValue(value=self._group_id),
+                            ),
+                            models.FieldCondition(
+                                key="source",
+                                match=models.MatchValue(value="github"),
+                            ),
+                            models.FieldCondition(
+                                key="type",
+                                match=models.MatchValue(value="github_code_blob"),
+                            ),
+                            models.FieldCondition(
+                                key="file_path",
+                                match=models.MatchAny(any=file_paths),
+                            ),
+                            models.FieldCondition(
+                                key="is_current",
+                                match=models.MatchValue(value=True),
+                            ),
+                        ]
+                    ),
+                    limit=100,
+                    offset=offset,
+                    with_payload=False,
+                )
+                all_point_ids.extend([p.id for p in points])
+                if next_offset is None:
+                    break
+                offset = next_offset
+
+            if all_point_ids:
+                BATCH_SIZE = 500
+                for i in range(0, len(all_point_ids), BATCH_SIZE):
+                    batch = all_point_ids[i : i + BATCH_SIZE]
+                    self.qdrant.set_payload(
+                        collection_name=GITHUB_COLLECTION,
+                        payload={"last_synced": now_iso},
+                        points=batch,
+                    )
+                logger.info(
+                    "Batch updated last_synced: %d points across %d files",
+                    len(all_point_ids),
+                    len(file_paths),
+                )
+        except Exception as e:
+            logger.warning(
+                "Failed to batch update last_synced for %d files: %s",
+                len(file_paths),
+                e,
+            )
 
     def _supersede_old_blobs(
         self, file_path: str, blob_hash: str | None = None

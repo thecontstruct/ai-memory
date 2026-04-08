@@ -123,6 +123,27 @@ pytest tests/ --cov=src/memory
 - Integration tests: `tests/integration/`
 - Fixtures: `tests/conftest.py`
 
+### E2E Tests
+
+End-to-end (E2E) tests use Playwright to validate the full system with all Docker services running.
+
+**Automatic E2E on main:**
+- E2E tests run automatically on pushes to `main` branch
+- Requires Docker services (Qdrant, Jina embedding, Prometheus, Grafana, monitoring API)
+
+**Opt-in E2E on PRs:**
+Include `[e2e]` in your PR title to trigger E2E tests on pull requests:
+
+```bash
+# When creating a PR, include [e2e] in the title
+# Example PR title: "feat: add new feature [e2e]"
+```
+
+**Important:** E2E tests are resource-intensive and require:
+- Docker with `--profile monitoring` support
+- ~5 minutes for first-time model download
+- Ports 26350, 28080, 29091, 23000, 28000 available
+
 ## Project Structure
 
 ```

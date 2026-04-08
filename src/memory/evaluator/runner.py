@@ -1,4 +1,4 @@
-# LANGFUSE: V3 SDK ONLY. See LANGFUSE-INTEGRATION-SPEC.md
+# LANGFUSE: V4 SDK ONLY. See LANGFUSE-INTEGRATION-SPEC.md
 # FORBIDDEN: Langfuse() constructor, start_span(), start_generation(), langfuse_context
 # REQUIRED: get_client(), create_score(), flush()
 """Evaluation runner — fetches traces and observations, evaluates, attaches scores.
@@ -50,7 +50,7 @@ except ImportError:  # pragma: no cover
 
     def get_client():  # type: ignore[misc]
         raise ImportError(
-            "langfuse package not installed — pip install 'langfuse>=3.0,<4.0'"
+            "langfuse package not installed — pip install 'langfuse>=4.0.0,<4.1.0'"
         )
 
 
@@ -291,15 +291,15 @@ class EvaluatorRunner:
                 page = 1
 
                 while True:
-                    # Page-based pagination — V3 observations API
-                    obs_response = langfuse.api.observations.get_many(
+                    obs_response = langfuse.api.legacy.observations_v1.get_many(
                         name=name_filter,
                         from_start_time=since,
                         to_start_time=until,
                         page=page,
                         limit=batch_size,
                     )
-                    observations = obs_response.data or []
+                    observations = obs_response.data
+                    _total_pages = obs_response.meta.total_pages
                     fetched += len(observations)
 
                     for obs in observations:
@@ -413,10 +413,7 @@ class EvaluatorRunner:
                             )
                             continue
 
-                    # Page-based stop condition
-                    meta = getattr(obs_response, "meta", None)
-                    total_pages = getattr(meta, "total_pages", 1) if meta else 1
-                    if page >= total_pages or not observations:
+                    if page >= _total_pages or not observations:
                         break
                     page += 1
 

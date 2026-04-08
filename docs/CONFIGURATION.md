@@ -68,7 +68,7 @@ Defaults → Environment Variables → Runtime Overrides
 # Core Settings
 QDRANT_HOST=localhost
 QDRANT_PORT=26350
-LOG_LEVEL=INFO
+AI_MEMORY_LOG_LEVEL=INFO
 
 # Performance
 MAX_RETRIEVALS=10
@@ -177,10 +177,12 @@ export AI_MEMORY_PROJECT_ID=my-awesome-project
 
 ---
 
-#### LOG_LEVEL
+#### AI_MEMORY_LOG_LEVEL
 **Purpose:** Logging verbosity
 
 **Default:** `INFO`
+
+**Aliases:** `LOG_LEVEL`, `BMAD_LOG_LEVEL` (deprecated — use AI_MEMORY_LOG_LEVEL instead; emits DeprecationWarning)
 
 **Options:**
 - `DEBUG` - Verbose logging (all operations)
@@ -191,7 +193,7 @@ export AI_MEMORY_PROJECT_ID=my-awesome-project
 
 **Example:**
 ```bash
-export LOG_LEVEL=DEBUG
+export AI_MEMORY_LOG_LEVEL=DEBUG
 ```
 
 **When to change:**
@@ -423,7 +425,7 @@ export EMBEDDING_MODEL_DENSE_CODE=jinaai/jina-embeddings-v2-base-code
 #### MAX_RETRIEVALS
 **Purpose:** Maximum memories to retrieve in search/SessionStart
 
-**Default:** `5`
+**Default:** `10`
 
 **Format:** Integer (1-50)
 
@@ -433,10 +435,10 @@ export EMBEDDING_MODEL_DENSE_CODE=jinaai/jina-embeddings-v2-base-code
 export MAX_RETRIEVALS=3
 
 # Default
-export MAX_RETRIEVALS=5
+export MAX_RETRIEVALS=10
 
 # Comprehensive (slower, more context)
-export MAX_RETRIEVALS=10
+export MAX_RETRIEVALS=20
 
 # Maximum
 export MAX_RETRIEVALS=50
@@ -1852,7 +1854,7 @@ AGENTS = {
 # ~/.ai-memory/.env
 
 # Verbose logging
-LOG_LEVEL=DEBUG
+AI_MEMORY_LOG_LEVEL=DEBUG
 
 # Lower threshold (see more results)
 SIMILARITY_THRESHOLD=0.3
@@ -1867,13 +1869,13 @@ MAX_RETRIEVALS=10
 # ~/.ai-memory/.env
 
 # Standard logging
-LOG_LEVEL=INFO
+AI_MEMORY_LOG_LEVEL=INFO
 
 # Strict relevance
 SIMILARITY_THRESHOLD=0.7
 
 # Balanced retrievals
-MAX_RETRIEVALS=5
+MAX_RETRIEVALS=10
 
 # Structured logging for aggregation
 LOG_FORMAT=json
@@ -1885,7 +1887,7 @@ LOG_FORMAT=json
 # ~/.ai-memory/.env
 
 # Debug logging
-LOG_LEVEL=DEBUG
+AI_MEMORY_LOG_LEVEL=DEBUG
 
 # Permissive threshold
 SIMILARITY_THRESHOLD=0.2

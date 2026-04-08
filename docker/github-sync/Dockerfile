@@ -1,15 +1,10 @@
-FROM python:3.12.8-slim
+FROM python:3.12-slim
 
 LABEL ai-memory.managed="true"
 LABEL ai-memory.wipe-policy="exclude"
 LABEL org.opencontainers.image.vendor="ai-memory"
 
 WORKDIR /app
-
-# Install system dependencies (curl for healthcheck fallback)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
 COPY docker/github-sync/requirements.txt .

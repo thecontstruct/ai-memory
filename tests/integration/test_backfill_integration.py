@@ -98,7 +98,14 @@ class TestConcurrentExecution:
 
     @pytest.fixture
     def slow_lock_script(self, tmp_path):
-        """Create a script that holds a lock for 5 seconds using pure fcntl."""
+        """Create a script that holds a lock for the test duration using pure fcntl.
+
+        Note: sleep duration matches proc2 timeout to ensure lock window covers
+        the cold-boot + lock-check cycle. Proc1 is terminated by
+        proc1.terminate() at cleanup as soon as proc2 exits, so proc1 does not
+        actually sleep the full duration in the happy path.
+        See TD-407 + TD-388 (memory.__init__ lazy-import root cause).
+        """
         script = tmp_path / "slow_lock.py"
         script.write_text("""
 import time
@@ -117,7 +124,7 @@ try:
     fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     print("Lock acquired, sleeping...")
     sys.stdout.flush()
-    time.sleep(5)
+    time.sleep(30)
     print("Done")
 except (IOError, OSError):
     print("Lock conflict")
@@ -155,7 +162,7 @@ except (IOError, OSError):
         env["BACKFILL_LOCK_FILE"] = str(lock_file)
         env["MEMORY_QUEUE_PATH"] = str(queue_path)
 
-        # Start first process (holds lock for 5 seconds)
+        # Start first process (slow_lock_script holds the fcntl lock)
         proc1 = subprocess.Popen(
             [sys.executable, str(slow_lock_script)],
             stdout=subprocess.PIPE,
@@ -178,7 +185,7 @@ except (IOError, OSError):
             [sys.executable, str(script_path)],
             capture_output=True,
             text=True,
-            timeout=5,  # Should return quickly, but allow some margin
+            timeout=30,  # CI cold-boot on memory package import (per TD-388) can exceed 5s; paired with proc1 lock-window duration (see slow_lock_script fixture) so cold-boot cannot race past the lock release (TD-407)
             env=env,
         )
 
@@ -317,7 +324,7 @@ class TestCLIModes:
             [sys.executable, str(script_path), "--limit", "10"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
         # Should succeed (exit 0) or fail with service error (not validation)
         assert result.returncode in [0, 1]
@@ -328,7 +335,7 @@ class TestCLIModes:
             [sys.executable, str(script_path), "--limit", "2000"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
         # Should fail with validation error (exit 2 from argparse)
         assert result.returncode == 2
@@ -405,7 +412,7 @@ class TestExitCodes:
             [sys.executable, str(script_path), "--limit", "invalid"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
 
         assert result.returncode == 2
