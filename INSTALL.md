@@ -930,7 +930,7 @@ Create `~/.ai-memory/docker/.env` to override defaults:
 # Service endpoints
 QDRANT_HOST=localhost
 QDRANT_PORT=26350
-EMBEDDING_HOST=localhost
+EMBEDDING_HOST=127.0.0.1
 EMBEDDING_PORT=28080
 
 # Installation directory

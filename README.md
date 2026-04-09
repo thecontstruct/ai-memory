@@ -558,7 +558,7 @@ All services use `2XXXX` prefix to avoid conflicts:
 |------------------------|----------------------|-----------------------------------|
 | `QDRANT_HOST`          | `localhost`          | Qdrant server hostname            |
 | `QDRANT_PORT`          | `26350`              | Qdrant external port              |
-| `EMBEDDING_HOST`       | `localhost`          | Embedding service hostname        |
+| `EMBEDDING_HOST`       | `127.0.0.1`          | Embedding service hostname        |
 | `EMBEDDING_PORT`       | `28080`              | Embedding service port            |
 | `AI_MEMORY_INSTALL_DIR`   | `~/.ai-memory`     | Installation directory            |
 | `AI_MEMORY_LOG_LEVEL`  | `INFO`               | Logging level (DEBUG/INFO/WARNING)|

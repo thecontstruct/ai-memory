@@ -70,7 +70,7 @@ These are set automatically in settings.json by the installer:
 - AI_MEMORY_PROJECT_ID — Current project name
 - QDRANT_HOST / QDRANT_PORT — Qdrant connection (localhost:26350)
 - QDRANT_API_KEY — Qdrant authentication
-- EMBEDDING_HOST / EMBEDDING_PORT — Embedding service (localhost:28080)
+- EMBEDDING_HOST / EMBEDDING_PORT — Embedding service (127.0.0.1:28080)
 
 ## Error Handling
 
