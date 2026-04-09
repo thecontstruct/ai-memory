@@ -205,7 +205,13 @@ def test_generate_hook_config_service_defaults(monkeypatch):
     from generate_settings import generate_hook_config
 
     # Isolate from environment overrides so defaults are tested
-    for var in ("QDRANT_HOST", "QDRANT_PORT", "QDRANT_GRPC_PORT", "EMBEDDING_HOST", "EMBEDDING_PORT"):
+    for var in (
+        "QDRANT_HOST",
+        "QDRANT_PORT",
+        "QDRANT_GRPC_PORT",
+        "EMBEDDING_HOST",
+        "EMBEDDING_PORT",
+    ):
         monkeypatch.delenv(var, raising=False)
 
     config = generate_hook_config("/absolute/path/to/hooks", "test-project")
