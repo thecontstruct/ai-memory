@@ -3324,7 +3324,8 @@ config = {
         'AI_MEMORY_PROJECT_ID': project_id,
         'QDRANT_HOST': 'localhost',
         'QDRANT_PORT': '26350',
-        'EMBEDDING_HOST': 'localhost',
+        'QDRANT_GRPC_PORT': '26351',
+        'EMBEDDING_HOST': '127.0.0.1',
         'EMBEDDING_PORT': '28080',
         'SIMILARITY_THRESHOLD': '0.4',
         'LOG_LEVEL': 'INFO'

@@ -219,7 +219,7 @@ def test_environment_variable_configuration(installer_script):
         assert "AI_MEMORY_QDRANT_PORT" in content, "Missing QDRANT_PORT env var"
         assert "AI_MEMORY_EMBEDDING_PORT" in content, "Missing EMBEDDING_PORT env var"
         assert "QDRANT_GRPC_PORT" in content, "Missing QDRANT_GRPC_PORT env var"
-        assert 'EMBEDDING_HOST="127.0.0.1"' in content, "Missing IPv4 embedding host default"
+        assert "'EMBEDDING_HOST': '127.0.0.1'" in content, "Missing IPv4 embedding host default"
 
         # Verify defaults
         assert "26350" in content, "Missing Qdrant default port"

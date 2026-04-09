@@ -200,9 +200,13 @@ def test_generate_hook_config_absolute_paths():
                 assert "$AI_MEMORY_INSTALL_DIR" in hook["command"]
 
 
-def test_generate_hook_config_service_defaults():
+def test_generate_hook_config_service_defaults(monkeypatch):
     """Generated env defaults must target local host ports and IPv4 embedding."""
     from generate_settings import generate_hook_config
+
+    # Isolate from environment overrides so defaults are tested
+    for var in ("QDRANT_HOST", "QDRANT_PORT", "QDRANT_GRPC_PORT", "EMBEDDING_HOST", "EMBEDDING_PORT"):
+        monkeypatch.delenv(var, raising=False)
 
     config = generate_hook_config("/absolute/path/to/hooks", "test-project")
     env = config["env"]
