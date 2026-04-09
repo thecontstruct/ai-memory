@@ -5,6 +5,20 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-04-09
+
+Endpoint alignment and documentation accuracy patch.
+
+### Fixed
+- Generated hook configs now target correct local service ports: `QDRANT_GRPC_PORT=26351` added, `EMBEDDING_HOST` changed from `localhost` to `127.0.0.1` for IPv4 reliability (PR #108)
+- Qdrant recency retrieval uses typed `OrderBy`/`Direction` API instead of rejected dict form — fixes `unknown enum label "desc"` failure in `search.py` and `stats.py` (PR #108)
+- Claude adapter config in installer aligned with Cursor and Codex adapters (PR #108)
+- Test assertion format corrected to match Python dict syntax in installer (PR #108)
+- Test environment isolation added to `test_generate_hook_config_service_defaults` (PR #108)
+
+### Changed
+- `EMBEDDING_HOST` default updated to `127.0.0.1` across all documentation: README, INSTALL.md, CONFIGURATION.md, skill files, and E2E verification script (PR #108)
+
 ## [2.3.0] - 2026-04-07
 
 Stabilization, observability, and data integrity release. Includes Langfuse v3-to-v4 SDK migration, security hardening, installer robustness improvements, Docker infrastructure fixes, CI regression gate, and comprehensive documentation accuracy fixes.
