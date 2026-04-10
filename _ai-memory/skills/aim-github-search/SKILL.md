@@ -8,9 +8,9 @@ allowed-tools: Read, Bash
 
 Search the discussions collection for GitHub-sourced content using semantic similarity with advanced filtering.
 
-## Usage
+## Activation
 
-```bash
+```text
 # Basic semantic search
 /aim-github-search "authentication bug"
 
@@ -71,7 +71,7 @@ Every GitHub point in `discussions` has the following payload fields. Use these 
 | `content` | string | Composed document text | `"[PR #42] Add decay scoring..."` |
 | `type` | string | Document type | `"github_pr"`, `"github_issue"` |
 | `source` | string | Always `"github"` | `"github"` |
-| `group_id` | string | `owner/repo` | `"Hidden-History/ai-memory"` |
+| `group_id` | string | normalized lowercase `owner/repo` | `"hidden-history/ai-memory"` |
 | `github_id` | int | Issue/PR number | `42` |
 | `state` | string | Current state | `"open"`, `"closed"`, `"merged"` |
 | `url` | string | GitHub URL | `"https://github.com/..."` |

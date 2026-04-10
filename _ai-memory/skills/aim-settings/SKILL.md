@@ -8,9 +8,9 @@ allowed-tools: Read
 
 Display the current configuration of the AI Memory Module, including collections, types, thresholds, token budgets, and service endpoints.
 
-## Usage
+## Activation
 
-```bash
+```text
 # Show all memory settings
 /aim-settings
 
@@ -76,9 +76,9 @@ Shows token allocation per BMAD agent:
 - **Warning threshold** - 10,000 points
 - **Critical threshold** - 50,000 points
 
-## Examples
+## Activation Examples
 
-```bash
+```text
 # View complete configuration
 /aim-settings
 

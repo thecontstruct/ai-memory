@@ -8,9 +8,9 @@ allowed-tools: Bash
 
 Synchronize GitHub issues, pull requests, commits, and CI results from the configured repository into the AI Memory discussions collection.
 
-## Usage
+## Activation
 
-```bash
+```text
 # Incremental sync (default) - only fetch updated items
 /aim-github-sync
 
@@ -82,14 +82,15 @@ for k, v in d.items():
 
 ### Status Mode
 
-Reads `.audit/state/github_sync_state.json` and displays last sync timestamps per type:
+Reads the shared install state file from `~/.ai-memory/github-state/` and
+displays last sync timestamps per type for the current repo:
 
 ```bash
 cd "$AI_MEMORY_INSTALL_DIR" || { echo "Error: AI_MEMORY_INSTALL_DIR is not set or directory does not exist"; exit 1; }
 python3 -c "
 import json
 from pathlib import Path
-state_file = Path('.audit/state/github_sync_state.json')
+state_file = Path('github-state/github_sync_state_owner__repo.json')
 if not state_file.exists():
     print('No sync state found. Run /aim-github-sync first.')
 else:
@@ -118,7 +119,7 @@ Error: GitHub sync is not enabled. Set GITHUB_SYNC_ENABLED=true and configure GI
 - **Deduplication**: SHA256 content hashing prevents duplicate storage (SPEC-005)
 - **Versioning**: Changed content creates new version, marks old as superseded
 - **Collection**: discussions (shared with conversation data, filtered by source="github")
-- **Tenant Isolation**: group_id = owner/repo
+- **Tenant Isolation**: `group_id` uses normalized lowercase `owner/repo`
 - **Sync Priority**: PRs (+ reviews + diffs) -> Issues (+ comments) -> Commits -> CI Results
 
 ## Notes
@@ -126,6 +127,6 @@ Error: GitHub sync is not enabled. Set GITHUB_SYNC_ENABLED=true and configure GI
 - Requires GitHub personal access token (classic or fine-grained)
 - Sync logs written to `~/.ai-memory/logs/activity.log`
 - First full sync can take several minutes for large repositories
-- Incremental sync timestamps stored per type in `github_sync_state.json`
+- Incremental sync timestamps stored per repo in `~/.ai-memory/github-state/github_sync_state_<owner__repo>.json`
 - Reviews and diffs are synced as part of PR sync
 - Issue comments are synced as part of issue sync

@@ -8,9 +8,9 @@ allowed-tools: Bash
 
 Synchronize Jira issues and comments from configured projects into the AI Memory jira-data collection.
 
-## Usage
+## Activation
 
-```bash
+```text
 # Incremental sync (default) - only fetch updated issues
 /aim-jira-sync
 
@@ -63,9 +63,9 @@ JIRA_SYNC_ENABLED=true
 JIRA_SYNC_DELAY_MS=100
 ```
 
-## Examples
+## Activation Examples
 
-```bash
+```text
 # Daily incremental sync (recommended)
 /aim-jira-sync
 
