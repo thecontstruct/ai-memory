@@ -54,9 +54,11 @@ Attempt to save the handoff and task state to Qdrant for cross-session AI-search
 
 ### 1. Attempt Qdrant Handoff Save
 
-Invoke the handoff save skill:
+Run the handoff save script through the installed ai-memory wrapper:
 
-/parzival-save-handoff --file {handoff_path}
+```bash
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" parzival_save_handoff.py --file {handoff_path}
+```
 
 Where {handoff_path} is the file created in Step 3 (e.g., `{oversight_path}/session-logs/SESSION_HANDOFF_{date}.md`).
 
@@ -72,9 +74,11 @@ Continue with closeout. Do NOT retry. Do NOT block.
 
 ### 2. Attempt Qdrant Task State Save
 
-Invoke the insight save skill with current task state:
+Run the insight save script through the installed ai-memory wrapper with current task state:
 
-/parzival-save-insight "Active task: [TASK_ID] [TITLE] - [STATUS]. Next: [NEXT_STEP]. Key decisions: [DECISIONS]. Blockers: [BLOCKERS]."
+```bash
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" parzival_save_insight.py "Active task: [TASK_ID] [TITLE] - [STATUS]. Next: [NEXT_STEP]. Key decisions: [DECISIONS]. Blockers: [BLOCKERS]."
+```
 
 **If skill succeeds**: Note success.
 

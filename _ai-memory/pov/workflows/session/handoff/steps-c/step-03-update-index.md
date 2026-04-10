@@ -54,7 +54,13 @@ Add a reference to the new handoff in the SESSION_WORK_INDEX and confirm to the 
 
 ### 1. Save Handoff to Qdrant
 
-Run `/parzival-save-handoff --file {handoff_path}` where `{handoff_path}` is the path to the handoff document created in Step 2.
+Run the handoff save script through the installed ai-memory wrapper:
+
+```bash
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" parzival_save_handoff.py --file {handoff_path}
+```
+
+Where `{handoff_path}` is the path to the handoff document created in Step 2.
 
 The skill handles:
 - Storing the handoff as `agent_handoff` type with `agent_id=parzival`

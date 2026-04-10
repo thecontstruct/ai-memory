@@ -8,9 +8,9 @@ allowed-tools: Read, Bash
 
 Search the jira-data collection for issues and comments using semantic similarity with advanced filtering.
 
-## Usage
+## Activation
 
-```bash
+```text
 # Basic semantic search
 /aim-jira-search "authentication bug"
 
