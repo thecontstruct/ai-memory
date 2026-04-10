@@ -675,7 +675,7 @@ else:
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/repos/${PROJECT_GITHUB_REPO}" \
                 --connect-timeout 10 --max-time 15 2>/dev/null) || http_code="000"
-    
+
             if [[ "$http_code" == "200" ]]; then
                 log_success "GitHub connection verified (HTTP 200) — repo: $PROJECT_GITHUB_REPO"
             else
@@ -696,7 +696,7 @@ else:
                     echo ""
                     echo "   Could not access ${PROJECT_GITHUB_REPO} with the current token."
                 fi
-    
+
                 # BUG-245: Interactive recovery menu
                 echo ""
                 echo "   Options:"
@@ -3324,7 +3324,8 @@ config = {
         'AI_MEMORY_PROJECT_ID': project_id,
         'QDRANT_HOST': 'localhost',
         'QDRANT_PORT': '26350',
-        'EMBEDDING_HOST': 'localhost',
+        'QDRANT_GRPC_PORT': '26351',
+        'EMBEDDING_HOST': '127.0.0.1',
         'EMBEDDING_PORT': '28080',
         'SIMILARITY_THRESHOLD': '0.4',
         'LOG_LEVEL': 'INFO'
@@ -3370,7 +3371,7 @@ write_cursor_config() {
     mkdir -p "$project_path/.cursor"
     local py="$install_dir/.venv/bin/python"
     local ad="$install_dir/src/memory/adapters"
-    local env_prefix="AI_MEMORY_INSTALL_DIR=\"$install_dir\" AI_MEMORY_PROJECT_ID=\"$project_id\" QDRANT_HOST=\"localhost\" QDRANT_PORT=\"26350\" EMBEDDING_HOST=\"localhost\" EMBEDDING_PORT=\"28080\" SIMILARITY_THRESHOLD=\"0.4\" LOG_LEVEL=\"INFO\""
+    local env_prefix="AI_MEMORY_INSTALL_DIR=\"$install_dir\" AI_MEMORY_PROJECT_ID=\"$project_id\" QDRANT_HOST=\"localhost\" QDRANT_PORT=\"26350\" QDRANT_GRPC_PORT=\"26351\" EMBEDDING_HOST=\"127.0.0.1\" EMBEDDING_PORT=\"28080\" SIMILARITY_THRESHOLD=\"0.4\" LOG_LEVEL=\"INFO\""
 
     python3 -c "
 import json, sys
@@ -3420,7 +3421,7 @@ write_codex_config() {
     mkdir -p "$project_path/.codex"
     local py="$install_dir/.venv/bin/python"
     local ad="$install_dir/src/memory/adapters"
-    local env_prefix="AI_MEMORY_INSTALL_DIR=\"$install_dir\" AI_MEMORY_PROJECT_ID=\"$project_id\" QDRANT_HOST=\"localhost\" QDRANT_PORT=\"26350\" EMBEDDING_HOST=\"localhost\" EMBEDDING_PORT=\"28080\" SIMILARITY_THRESHOLD=\"0.4\" LOG_LEVEL=\"INFO\""
+    local env_prefix="AI_MEMORY_INSTALL_DIR=\"$install_dir\" AI_MEMORY_PROJECT_ID=\"$project_id\" QDRANT_HOST=\"localhost\" QDRANT_PORT=\"26350\" QDRANT_GRPC_PORT=\"26351\" EMBEDDING_HOST=\"127.0.0.1\" EMBEDDING_PORT=\"28080\" SIMILARITY_THRESHOLD=\"0.4\" LOG_LEVEL=\"INFO\""
 
     python3 -c "
 import json, sys

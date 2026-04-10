@@ -320,7 +320,7 @@ def check_docker_services(results: TestResults, verbose: bool = False) -> bool:
         return False
 
     # Check Embedding service
-    embedding_host = os.environ.get("EMBEDDING_HOST", "localhost")
+    embedding_host = os.environ.get("EMBEDDING_HOST", "127.0.0.1")
     embedding_port = os.environ.get("EMBEDDING_PORT", "28080")
 
     try:

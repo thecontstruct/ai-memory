@@ -346,14 +346,14 @@ export QDRANT_GRPC_PORT=16334
 #### EMBEDDING_HOST
 **Purpose:** Embedding service hostname
 
-**Default:** `localhost`
+**Default:** `127.0.0.1`
 
 **Format:** Hostname or IP address
 
 **Example:**
 ```bash
 # Local development (default)
-export EMBEDDING_HOST=localhost
+export EMBEDDING_HOST=127.0.0.1
 
 # Docker network
 export EMBEDDING_HOST=ai-memory-embedding

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.3.0-green?style=flat-square" alt="Version 2.3.0">
+  <img src="https://img.shields.io/badge/version-2.3.1-green?style=flat-square" alt="Version 2.3.1">
   <a href="https://github.com/Hidden-History/ai-memory/stargazers"><img src="https://img.shields.io/github/stars/Hidden-History/ai-memory?color=blue&style=flat-square" alt="Stars"></a>
   <a href="https://github.com/Hidden-History/ai-memory/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Hidden-History/ai-memory?style=flat-square" alt="License"></a>
   <a href="https://github.com/Hidden-History/ai-memory/issues"><img src="https://img.shields.io/github/issues/Hidden-History/ai-memory?color=red&style=flat-square" alt="Issues"></a>
@@ -558,7 +558,7 @@ All services use `2XXXX` prefix to avoid conflicts:
 |------------------------|----------------------|-----------------------------------|
 | `QDRANT_HOST`          | `localhost`          | Qdrant server hostname            |
 | `QDRANT_PORT`          | `26350`              | Qdrant external port              |
-| `EMBEDDING_HOST`       | `localhost`          | Embedding service hostname        |
+| `EMBEDDING_HOST`       | `127.0.0.1`          | Embedding service hostname        |
 | `EMBEDDING_PORT`       | `28080`              | Embedding service port            |
 | `AI_MEMORY_INSTALL_DIR`   | `~/.ai-memory`     | Installation directory            |
 | `AI_MEMORY_LOG_LEVEL`  | `INFO`               | Logging level (DEBUG/INFO/WARNING)|
