@@ -31,6 +31,7 @@ def _get_real_project_module():
 _project_module = _get_real_project_module()
 detect_project = _project_module.detect_project
 normalize_project_name = _project_module.normalize_project_name
+normalize_org_repo_slug = _project_module.normalize_org_repo_slug
 get_project_hash = _project_module.get_project_hash
 
 
@@ -103,6 +104,16 @@ class TestNormalizeProjectName:
     def test_normalization_examples(self, input_name, expected):
         """Test various normalization examples."""
         assert normalize_project_name(input_name) == expected
+
+
+class TestNormalizeOrgRepoSlug:
+    """Test owner/repo normalization while preserving slash separators."""
+
+    def test_preserves_separator_and_normalizes_case(self):
+        assert normalize_org_repo_slug("Axonify/Thunderball") == "axonify/thunderball"
+
+    def test_returns_none_for_non_repo_values(self):
+        assert normalize_org_repo_slug("plain-project") is None
 
 
 class TestGetProjectHash:
@@ -213,6 +224,14 @@ class TestDetectProject:
         monkeypatch.chdir(project_dir)
         result = detect_project()
         assert result == "current-project"
+
+    def test_env_project_id_owner_repo_preserves_slash(self, monkeypatch, tmp_path):
+        """AI_MEMORY_PROJECT_ID keeps owner/repo form when provided."""
+        project_dir = tmp_path / "ignored-project"
+        project_dir.mkdir()
+        monkeypatch.setenv("AI_MEMORY_PROJECT_ID", "Axonify/Thunderball")
+        result = detect_project(str(project_dir))
+        assert result == "axonify/thunderball"
 
     def test_symlink_resolution(self, tmp_path):
         """Symlinks should be resolved to actual path."""

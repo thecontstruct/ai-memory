@@ -120,7 +120,7 @@ The installer validates the token against the GitHub API before proceeding. On s
 
 ### Incremental Sync (Default)
 
-After the first run, only new or updated items are fetched. The last-seen state is tracked per content type in `~/.ai-memory/.audit/state/github_sync_state.json`:
+After the first run, only new or updated items are fetched. The last-seen state is tracked per repo in `~/.ai-memory/github-state/github_sync_state_<owner__repo>.json`:
 
 ```json
 {
@@ -164,7 +164,7 @@ Qdrant (github collection for all GitHub-synced data)
     │   memory_type tag for filtering
     │
     ▼
-State Persistence (~/.ai-memory/.audit/state/github_sync_state.json)
+State Persistence (~/.ai-memory/github-state/github_sync_state_<owner__repo>.json)
 ```
 
 ### Rate Limiting
@@ -228,6 +228,28 @@ Manually trigger a sync outside the scheduled interval.
 # Check sync status
 /aim-github-sync --status
 ```
+
+### Legacy ID Audit and Migration
+
+Older installs could end up with mixed identifiers, most commonly:
+
+- GitHub data stored under mixed-case `owner/repo`
+- project-scoped data stored under flattened `owner-repo`
+
+Audit the current install before migrating:
+
+```bash
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" audit_group_ids.py
+```
+
+If legacy aliases are reported, review the dry run and then apply:
+
+```bash
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" migrate_group_ids.py
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" migrate_group_ids.py --apply
+```
+
+The migration rewrites detected legacy aliases to their canonical IDs, updates `AI_MEMORY_PROJECT_ID` in the installed `docker/.env` when it still matches a legacy flattened alias, and moves any legacy GitHub sync state file into the shared `github-state/` location when needed.
 
 ### Session Start Enrichment
 
@@ -293,8 +315,8 @@ tail -f ~/.ai-memory/logs/github_sync.log
 To force a full re-sync from scratch:
 
 ```bash
-# Remove state file and run full sync
-rm ~/.ai-memory/.audit/state/github_sync_state.json
+# Remove the canonical per-repo state file and run full sync
+rm ~/.ai-memory/github-state/github_sync_state_owner__repo.json
 /aim-github-sync --full
 ```
 

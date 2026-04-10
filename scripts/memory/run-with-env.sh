@@ -9,9 +9,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-ENV_FILE="$PROJECT_ROOT/docker/.env"
 INSTALL_DIR="${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}"
+ENV_FILE="${AI_MEMORY_ENV_FILE:-$INSTALL_DIR/docker/.env}"
 PY_BIN="$INSTALL_DIR/.venv/bin/python"
 
 export QDRANT_HOST="${QDRANT_HOST:-localhost}"
@@ -20,13 +19,23 @@ export QDRANT_GRPC_PORT="${QDRANT_GRPC_PORT:-26351}"
 export EMBEDDING_HOST="${EMBEDDING_HOST:-127.0.0.1}"
 export QDRANT_USE_HTTPS="${QDRANT_USE_HTTPS:-false}"
 
+load_env_var() {
+    local name="$1"
+    local value
+    value="$(awk -F= -v key="$name" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE")"
+    if [ -n "$value" ]; then
+        export "$name=$value"
+    fi
+}
+
 # Load environment variables from docker/.env
 if [ -f "$ENV_FILE" ]; then
-    # Export only specific variables needed by scripts (avoid polluting env)
-    qdrant_api_key="$(grep '^QDRANT_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)"
-    if [ -n "$qdrant_api_key" ]; then
-        export QDRANT_API_KEY="$qdrant_api_key"
-    fi
+    load_env_var "QDRANT_API_KEY"
+    load_env_var "AI_MEMORY_PROJECT_ID"
+    load_env_var "GITHUB_REPO"
+    load_env_var "GITHUB_BRANCH"
+    load_env_var "GITHUB_TOKEN"
+    load_env_var "GITHUB_SYNC_ENABLED"
 else
     echo "Warning: $ENV_FILE not found, running without API key"
 fi

@@ -82,26 +82,11 @@ for k, v in d.items():
 
 ### Status Mode
 
-Reads the shared install state file from `~/.ai-memory/github-state/` and
-displays last sync timestamps per type for the current repo:
+Uses the real CLI status path, which resolves canonical and legacy state-file
+locations for the configured repo:
 
 ```bash
-cd "$AI_MEMORY_INSTALL_DIR" || { echo "Error: AI_MEMORY_INSTALL_DIR is not set or directory does not exist"; exit 1; }
-python3 -c "
-import json
-from pathlib import Path
-state_file = Path('github-state/github_sync_state_owner__repo.json')
-if not state_file.exists():
-    print('No sync state found. Run /aim-github-sync first.')
-else:
-    state = json.loads(state_file.read_text())
-    print('## GitHub Sync Status')
-    print('')
-    for type_key, info in state.items():
-        last = info.get('last_synced', 'never')
-        count = info.get('last_count', 0)
-        print(f'  {type_key}: last synced {last} ({count} items)')
-"
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" "${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/github_sync.py" --status
 ```
 
 ## Guard
@@ -130,3 +115,21 @@ Error: GitHub sync is not enabled. Set GITHUB_SYNC_ENABLED=true and configure GI
 - Incremental sync timestamps stored per repo in `~/.ai-memory/github-state/github_sync_state_<owner__repo>.json`
 - Reviews and diffs are synced as part of PR sync
 - Issue comments are synced as part of issue sync
+
+## Legacy ID Audit and Migration
+
+If GitHub data exists but status or project scoping looks inconsistent, audit for
+legacy mixed IDs first:
+
+```bash
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" audit_group_ids.py
+```
+
+If the report shows legacy aliases, review the plan and then apply the migration:
+
+```bash
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" migrate_group_ids.py
+"${AI_MEMORY_INSTALL_DIR:-$HOME/.ai-memory}/scripts/memory/run-with-env.sh" migrate_group_ids.py --apply
+```
+
+When the install still has a flattened legacy `AI_MEMORY_PROJECT_ID`, the apply step also updates that env entry to the canonical slash-form repo ID.
