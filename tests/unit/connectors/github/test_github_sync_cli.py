@@ -13,10 +13,10 @@ def test_status_display(capsys, tmp_path, monkeypatch):
     """--status shows sync state."""
     monkeypatch.chdir(tmp_path)
 
-    # Create state directory and file
-    state_dir = tmp_path / ".audit" / "state"
+    # Create canonical install state directory and file
+    state_dir = tmp_path / "github-state"
     state_dir.mkdir(parents=True)
-    state_file = state_dir / "github_sync_state.json"
+    state_file = state_dir / "github_sync_state_owner__repo.json"
     state_file.write_text(
         '{"issues": {"last_synced": "2026-01-01T00:00:00", "last_count": 42}}'
     )
@@ -26,6 +26,7 @@ def test_status_display(capsys, tmp_path, monkeypatch):
     config.github_repo = "owner/repo"
     config.github_code_blob_enabled = True
     config.github_sync_interval = 1800
+    config.install_dir = tmp_path
 
     with (
         patch.object(github_sync, "get_config", return_value=config),
