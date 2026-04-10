@@ -4,10 +4,11 @@ Single source of truth for version number.
 Follows PEP 440 and semantic versioning principles.
 """
 
-__version__ = "2.3.0"
+__version__ = "2.3.1"
 __version_info__ = tuple(int(part) for part in __version__.split("."))
 
 # Version history:
+# 2.3.1 - Endpoint alignment, typed OrderBy API, documentation accuracy (PR #108)
 # 2.3.0 - Stabilization: Langfuse v4, security hardening, data integrity, CI regression gate
 # 2.2.8 - Multi-IDE adapter support: Gemini CLI, Cursor IDE, Codex CLI
 # 2.2.7 - Per-project tokens, data quality, observability

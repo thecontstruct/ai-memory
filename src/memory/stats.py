@@ -29,7 +29,7 @@ import logging
 from dataclasses import dataclass
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from qdrant_client.models import Direction, FieldCondition, Filter, MatchValue, OrderBy
 
 __all__ = [
     "CollectionStats",
@@ -248,7 +248,7 @@ def get_last_updated(
         points, _ = client.scroll(
             collection_name=collection_name,
             limit=1,
-            order_by={"key": "timestamp", "direction": "desc"},
+            order_by=OrderBy(key="timestamp", direction=Direction.DESC),
             with_payload=["timestamp"],
             scroll_filter=scroll_filter,
         )
