@@ -14,17 +14,18 @@ INSTALL_DIR = os.environ.get(
 )
 sys.path.insert(0, os.path.join(INSTALL_DIR, "src"))
 
+from qdrant_client import models
+
 from memory.config import (
     COLLECTION_CODE_PATTERNS,
     COLLECTION_DISCUSSIONS,
     COLLECTION_GITHUB,
     get_config,
 )
-from memory.connectors.github.paths import github_state_file, github_state_candidates
+from memory.connectors.github.paths import github_state_candidates, github_state_file
 from memory.group_ids import build_group_id_plan
 from memory.project import normalize_project_name
 from memory.qdrant_client import get_qdrant_client
-from qdrant_client import models
 
 
 def parse_args() -> argparse.Namespace:
