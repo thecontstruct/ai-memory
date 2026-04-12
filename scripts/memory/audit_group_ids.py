@@ -9,7 +9,9 @@ import os
 import sys
 from pathlib import Path
 
-INSTALL_DIR = os.environ.get("AI_MEMORY_INSTALL_DIR", os.path.expanduser("~/.ai-memory"))
+INSTALL_DIR = os.environ.get(
+    "AI_MEMORY_INSTALL_DIR", os.path.expanduser("~/.ai-memory")
+)
 sys.path.insert(0, os.path.join(INSTALL_DIR, "src"))
 
 from memory.config import (
@@ -44,7 +46,11 @@ def count_group_id(client, collection: str, group_id: str) -> int:
     result = client.count(
         collection_name=collection,
         count_filter=models.Filter(
-            must=[models.FieldCondition(key="group_id", match=models.MatchValue(value=group_id))]
+            must=[
+                models.FieldCondition(
+                    key="group_id", match=models.MatchValue(value=group_id)
+                )
+            ]
         ),
         exact=True,
     )
@@ -78,7 +84,9 @@ def main() -> int:
     ]:
         print(f"- {collection}: {count_group_id(client, collection, gid)}")
     if plan.github_group_id:
-        print(f"- {COLLECTION_GITHUB}: {count_group_id(client, COLLECTION_GITHUB, plan.github_group_id)}")
+        print(
+            f"- {COLLECTION_GITHUB}: {count_group_id(client, COLLECTION_GITHUB, plan.github_group_id)}"
+        )
     print("")
 
     legacy_rows: list[tuple[str, str, dict[str, int]]] = []
@@ -87,13 +95,17 @@ def main() -> int:
             COLLECTION_CODE_PATTERNS: count_group_id(
                 client, COLLECTION_CODE_PATTERNS, legacy_id
             ),
-            COLLECTION_DISCUSSIONS: count_group_id(client, COLLECTION_DISCUSSIONS, legacy_id),
+            COLLECTION_DISCUSSIONS: count_group_id(
+                client, COLLECTION_DISCUSSIONS, legacy_id
+            ),
         }
         if any(counts.values()):
             legacy_rows.append(("project", legacy_id, counts))
 
     for legacy_id in plan.legacy_github_ids:
-        counts = {COLLECTION_GITHUB: count_group_id(client, COLLECTION_GITHUB, legacy_id)}
+        counts = {
+            COLLECTION_GITHUB: count_group_id(client, COLLECTION_GITHUB, legacy_id)
+        }
         if any(counts.values()):
             legacy_rows.append(("github", legacy_id, counts))
 

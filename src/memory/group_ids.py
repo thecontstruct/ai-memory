@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from memory.connectors.github.paths import normalize_github_repo_slug
-from memory.project import detect_project, normalize_org_repo_slug, normalize_project_name
+from memory.project import (
+    detect_project,
+    normalize_org_repo_slug,
+    normalize_project_name,
+)
 
 
 @dataclass(frozen=True)
@@ -19,7 +23,10 @@ class GroupIdPlan:
 
     @property
     def unified(self) -> bool:
-        return self.github_group_id is None or self.project_group_id == self.github_group_id
+        return (
+            self.github_group_id is None
+            or self.project_group_id == self.github_group_id
+        )
 
 
 def build_group_id_plan(
@@ -29,7 +36,9 @@ def build_group_id_plan(
     cwd: str | None = None,
 ) -> GroupIdPlan:
     """Build canonical and legacy ID sets for the current install."""
-    canonical_github_id = normalize_github_repo_slug(github_repo) if github_repo else None
+    canonical_github_id = (
+        normalize_github_repo_slug(github_repo) if github_repo else None
+    )
     normalized_project_slug = normalize_org_repo_slug(project_id)
     normalized_project_name = normalize_project_name(project_id or "")
     canonical_project_id = (

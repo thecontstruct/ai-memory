@@ -39,7 +39,11 @@ def show_status(config):
         config.github_repo,
         cwd=Path.cwd(),
     )
-    state_dir = sync_state_file.parent if sync_state_file else Path(config.install_dir) / "github-state"
+    state_dir = (
+        sync_state_file.parent
+        if sync_state_file
+        else Path(config.install_dir) / "github-state"
+    )
 
     print("GitHub Sync Status")
     print("=" * 50)
