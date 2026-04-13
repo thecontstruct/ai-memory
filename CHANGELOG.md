@@ -27,6 +27,63 @@ Security patches, group_id normalization, Phase B live-verify fixes, and canonic
 - **anthropic SDK patch — github-sync** (GHSA-w828-4qhx-vxx3, GHSA-q5f5-3gjm-7mfm): `anthropic` 0.86→0.87 in `docker/github-sync/requirements.txt` (PR #107)
 - **Dependency batch patch** (PR #112): `anthropic` 0.86→0.89 (GHSA-w828-4qhx-vxx3, GHSA-q5f5-3gjm-7mfm), `pytest` →9.0.3 (CVE-2025-71176), `uvicorn`/`ruff`/`mypy` minor/patch updates (9 packages total). All 14 open vulnerability alerts closed; `black` HIGH alert auto-resolved via `uv.lock` regeneration.
 
+### Upgrade Instructions
+
+**From v2.3.1 → v2.3.2:**
+
+This release includes changes to the `github-sync` Docker container (baked code + compose configuration) and **requires a container rebuild**, not just an installer Option 1 pass.
+
+1. **Pull the latest release:**
+   ```bash
+   cd /path/to/ai-memory
+   git fetch origin && git checkout main && git pull
+   ```
+
+2. **Run the installer** (Option 1 for existing installations):
+   ```bash
+   ./scripts/install.sh /path/to/your/project
+   # Select: Option 1 — Add project to existing installation
+   ```
+
+3. **Unset `QDRANT_API_KEY` before compose operations** (CRITICAL — pydantic-settings precedence):
+   ```bash
+   unset QDRANT_API_KEY
+   ```
+
+4. **Rebuild the `github-sync` container** (REQUIRED — baked code + compose env changes from PR #111):
+   ```bash
+   cd ~/.ai-memory/docker
+   unset QDRANT_API_KEY   # re-affirm; shell state resets
+   docker compose build --no-cache github-sync
+   docker compose up -d github-sync
+   ```
+
+5. **Verify stack health:**
+   ```bash
+   # All 17 services healthy
+   docker compose ps | grep -c "healthy"
+   # Expect output: 17
+
+   # github-sync logs clean — no container filesystem or config errors
+   docker compose logs github-sync --tail=30
+   # Expect: no [Errno 30] read-only filesystem errors
+   # Expect: no pydantic.ValidationError
+   # Expect: no install_dir="/.ai-memory" in startup logs
+   ```
+
+6. **(Optional) Run the `group_id` audit + migration tool** if your install has mixed-case repo slugs from an earlier version:
+   ```bash
+   cd /path/to/ai-memory
+   python scripts/memory/audit_group_ids.py          # inspect plan (dry run)
+   python scripts/memory/migrate_group_ids.py --apply  # execute migration
+   ```
+   The tool normalizes legacy mixed-case `group_id` values to canonical lowercase in Qdrant. Safe to skip on fresh installs.
+
+**Important notes:**
+- Always `unset QDRANT_API_KEY` before running `docker compose` commands. Shell env vars override `.env` file values, causing auth mismatches.
+- The `github-sync` container's code is baked into the Docker image — installer Option 1 alone is not sufficient. The `docker compose build --no-cache github-sync` step is mandatory for this release.
+- If the audit tool reports no legacy records, the migration step is a no-op.
+
 ## [2.3.1] - 2026-04-09
 
 Endpoint alignment and documentation accuracy patch.
