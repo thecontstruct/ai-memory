@@ -280,6 +280,7 @@ class MemoryConfig(BaseSettings):
     install_dir: Path = Field(
         default_factory=lambda: Path.home() / ".ai-memory",
         description="Installation directory",
+        validation_alias=AliasChoices("AI_MEMORY_INSTALL_DIR", "INSTALL_DIR"),
     )
 
     queue_path: Path = Field(
