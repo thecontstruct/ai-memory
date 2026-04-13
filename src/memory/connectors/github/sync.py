@@ -74,12 +74,18 @@ from memory.connectors.github.composer import (
     compose_pr_diff,
     compose_pr_review,
 )
+from memory.connectors.github.paths import (
+    github_state_candidates,
+    github_state_file,
+    normalize_github_repo_slug,
+)
 from memory.connectors.github.schema import (
     GITHUB_COLLECTION,
     SOURCE_AUTHORITY_MAP,
     compute_content_hash,
 )
 from memory.models import MemoryType
+from memory.project import normalize_org_repo_slug
 from memory.qdrant_client import get_qdrant_client
 from memory.storage import MemoryStorage
 
@@ -185,6 +191,7 @@ class GitHubSyncEngine:
         self.repo = repo or self.config.github_repo
         if not self.repo:
             raise ValueError("No repo specified and GITHUB_REPO not configured")
+        self.repo = normalize_org_repo_slug(self.repo) or self.repo
         self._branch = branch or self.config.github_branch
 
         # BUG-245: per-project token > global token
@@ -194,7 +201,7 @@ class GitHubSyncEngine:
             repo=self.repo,
         )
         self.storage = MemoryStorage(self.config)
-        self._group_id = self.repo  # owner/repo as tenant ID
+        self._group_id = normalize_github_repo_slug(self.repo)
         self.qdrant = get_qdrant_client(self.config)
 
         # SEC-2: Security scanner for GitHub content before storage
@@ -215,10 +222,8 @@ class GitHubSyncEngine:
             else Path.cwd()
         )
         self._project_root = project_root
-        self._state_dir = project_root / ".audit" / "state"
-        # Use __ for / to avoid collisions with - (which stays as-is)
-        repo_safe = self.repo.replace("/", "__")
-        self._state_file = self._state_dir / f"github_sync_state_{repo_safe}.json"
+        self._state_file = github_state_file(self.config.install_dir, self.repo)
+        self._state_dir = self._state_file.parent
 
     @observe(name="github_sync")
     async def sync(self, mode: str = "incremental") -> SyncResult:
@@ -1015,11 +1020,25 @@ class GitHubSyncEngine:
             State dict with per-type last_synced timestamps.
             Empty dict if file doesn't exist.
         """
-        if self._state_file.exists():
+        for candidate in github_state_candidates(
+            self.config.install_dir,
+            self.repo,
+            cwd=self._project_root,
+        ):
+            if not candidate.exists():
+                continue
             try:
-                return json.loads(self._state_file.read_text(encoding="utf-8"))
+                state = json.loads(candidate.read_text(encoding="utf-8"))
+                if candidate != self._state_file:
+                    logger.info(
+                        "Loaded GitHub sync state from legacy path %s; migrating to %s",
+                        candidate,
+                        self._state_file,
+                    )
+                    self._save_state(state)
+                return state
             except (json.JSONDecodeError, OSError) as e:
-                logger.warning("Failed to load sync state: %s", e)
+                logger.warning("Failed to load sync state from %s: %s", candidate, e)
         return {}
 
     def _save_state(self, state: dict[str, Any]) -> None:

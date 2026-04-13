@@ -70,6 +70,7 @@ from memory.connectors.github.client import (
     GitHubClient,
     GitHubClientError,
 )
+from memory.connectors.github.paths import normalize_github_repo_slug
 from memory.connectors.github.schema import (
     GITHUB_COLLECTION,
     SOURCE_AUTHORITY_MAP,
@@ -77,6 +78,7 @@ from memory.connectors.github.schema import (
 )
 from memory.extraction import detect_language as detect_language_from_path
 from memory.models import MemoryType
+from memory.project import normalize_org_repo_slug
 from memory.qdrant_client import get_qdrant_client
 from memory.storage import MemoryStorage
 
@@ -716,9 +718,11 @@ class CodeBlobSync:
         )
         self.storage = MemoryStorage(self.config)
         self.qdrant = get_qdrant_client(self.config)
-        self._group_id = repo or self.config.github_repo
-        if not self._group_id:
+        self._repo = repo or self.config.github_repo
+        if not self._repo:
             raise ValueError("No repo specified and GITHUB_REPO not configured")
+        self._repo = normalize_org_repo_slug(self._repo) or self._repo
+        self._group_id = normalize_github_repo_slug(self._repo)
         self._branch = branch or self.config.github_branch
         self._exclude_patterns = _parse_filter_patterns(
             getattr(self.config, "github_code_blob_exclude", "") or "",

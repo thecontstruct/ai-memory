@@ -56,14 +56,18 @@ def test_engine_group_id_from_repo():
     """group_id derived from github_repo config."""
     config = MagicMock()
     config.github_sync_enabled = True
-    config.github_repo = "owner/repo"
+    config.github_repo = "Owner/Repo"
     config.github_token.get_secret_value.return_value = "ghp_test"
+    config.install_dir = Path("/tmp/install")
     with (
         patch("memory.connectors.github.sync.MemoryStorage"),
         patch("memory.connectors.github.sync.get_qdrant_client"),
     ):
         engine = GitHubSyncEngine(config)
     assert engine._group_id == "owner/repo"
+    assert engine._state_file == Path(
+        "/tmp/install/github-state/github_sync_state_owner__repo.json"
+    )
 
 
 # -- Helper: create a mock engine for async tests ---------------------
@@ -77,6 +81,7 @@ def _make_engine():
     config.github_token.get_secret_value.return_value = "ghp_test"
     config.github_branch = "main"
     config.project_path = "/tmp/test-project"
+    config.install_dir = Path("/tmp/install")
     config.get_qdrant_url.return_value = "http://localhost:6333"
     config.qdrant_api_key = None
     with (
@@ -972,6 +977,26 @@ def test_load_state_corrupt_file(tmp_path):
 
     state = engine._load_state()
     assert state == {}
+
+
+def test_load_state_reads_legacy_repo_case_file(tmp_path):
+    """Legacy mixed-case install state file is loaded and migrated."""
+    engine = _make_engine()
+    engine.config.install_dir = tmp_path
+    engine.repo = "Owner/Repo"
+    engine._state_dir = tmp_path / "github-state"
+    engine._state_file = engine._state_dir / "github_sync_state_owner__repo.json"
+
+    legacy_state_file = engine._state_dir / "github_sync_state_Owner__Repo.json"
+    legacy_state_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_state_file.write_text(
+        '{"issues": {"last_synced": "2026-01-01T00:00:00", "last_count": 7}}',
+        encoding="utf-8",
+    )
+
+    state = engine._load_state()
+    assert state["issues"]["last_count"] == 7
+    assert engine._state_file.exists()
 
 
 def test_save_state_atomic_write(tmp_path):

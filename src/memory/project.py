@@ -84,6 +84,20 @@ def normalize_project_name(name: str) -> str:
     return normalized
 
 
+def normalize_org_repo_slug(org_repo: str) -> str | None:
+    """Normalize an owner/repo slug while preserving the slash separator."""
+    raw = (org_repo or "").strip()
+    if not raw or "/" not in raw:
+        return None
+
+    owner, repo = raw.split("/", 1)
+    owner_norm = normalize_project_name(owner)
+    repo_norm = normalize_project_name(repo)
+    if not owner_norm or not repo_norm:
+        return None
+    return f"{owner_norm}/{repo_norm}"
+
+
 def get_project_hash(cwd: str) -> str:
     """Get a hash-based project identifier for uniqueness.
 
@@ -142,12 +156,12 @@ def _extract_org_repo_from_remote_url(remote_url: str) -> str | None:
     # SSH format: git@host:org/repo.git or git@host:org/repo
     ssh_match = re.match(r"^git@[^:]+:([^/]+/[^/]+?)(?:\.git)?$", remote_url)
     if ssh_match:
-        return ssh_match.group(1).lower()
+        return normalize_org_repo_slug(ssh_match.group(1))
 
     # HTTPS format: https://host/org/repo.git or https://host/org/repo
     https_match = re.match(r"^https?://[^/]+/([^/]+/[^/]+?)(?:\.git)?$", remote_url)
     if https_match:
-        return https_match.group(1).lower()
+        return normalize_org_repo_slug(https_match.group(1))
 
     return None
 
@@ -250,7 +264,9 @@ def detect_project(cwd: str | None = None) -> str:
     # 1. Check environment variable first (highest priority)
     env_project = os.getenv("AI_MEMORY_PROJECT_ID")
     if env_project and env_project.strip():
-        project_name = normalize_project_name(env_project)
+        project_name = normalize_org_repo_slug(env_project) or normalize_project_name(
+            env_project
+        )
         logger.debug(
             "using_env_project",
             extra={"env_value": env_project, "normalized": project_name},

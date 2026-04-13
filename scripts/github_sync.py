@@ -24,19 +24,26 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from memory.config import get_config
 from memory.connectors.github.client import GitHubClient
 from memory.connectors.github.code_sync import CodeBlobSync
+from memory.connectors.github.paths import resolve_github_state_file
 from memory.connectors.github.sync import GitHubSyncEngine
 
 
 def show_status(config):
     """Display sync status from state files.
 
-    State file location: Path.cwd() / ".audit" / "state" / "github_sync_state.json"
-    Note: config.project_path does NOT exist — engine uses Path.cwd() fallback.
-    CodeBlobSync does not maintain state files (stateless per run).
+    State file location: canonical install dir github-state, with legacy fallbacks.
+    CodeBlobSync does not maintain separate state files (stateless per run).
     """
-    # Mirror sync.py state resolution: Path.cwd() / ".audit" / "state"
-    state_dir = Path.cwd() / ".audit" / "state"
-    sync_state_file = state_dir / "github_sync_state.json"
+    sync_state_file = resolve_github_state_file(
+        config.install_dir,
+        config.github_repo,
+        cwd=Path.cwd(),
+    )
+    state_dir = (
+        sync_state_file.parent
+        if sync_state_file
+        else Path(config.install_dir) / "github-state"
+    )
 
     print("GitHub Sync Status")
     print("=" * 50)
@@ -47,7 +54,7 @@ def show_status(config):
     print(f"State directory: {state_dir}")
     print()
 
-    if sync_state_file.exists():
+    if sync_state_file and sync_state_file.exists():
         state = json.loads(sync_state_file.read_text())
         print("Last sync state (issues/PRs/commits/CI):")
         for key, val in state.items():

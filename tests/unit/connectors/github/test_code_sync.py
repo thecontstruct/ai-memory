@@ -303,6 +303,28 @@ def _make_initialized_sync(
         return CodeBlobSync(mock_client, config)
 
 
+def test_init_normalizes_group_id():
+    mock_client = MagicMock()
+    config = MagicMock()
+    config.github_branch = "main"
+    config.github_repo = "Axonify/Thunderball"
+    config.github_code_blob_max_size = 102400
+    config.github_code_blob_include = ""
+    config.github_code_blob_include_max_size = 512000
+    config.github_code_blob_exclude = ""
+    config.github_sync_circuit_breaker_threshold = 5
+    config.github_sync_circuit_breaker_reset = 60
+    config.security_scanning_enabled = False
+
+    with (
+        patch("memory.connectors.github.code_sync.MemoryStorage"),
+        patch("memory.connectors.github.code_sync.get_qdrant_client"),
+    ):
+        sync = CodeBlobSync(mock_client, config)
+
+    assert sync._group_id == "axonify/thunderball"
+
+
 def _make_filtering_sync():
     sync = CodeBlobSync.__new__(CodeBlobSync)
     sync.config = MagicMock()

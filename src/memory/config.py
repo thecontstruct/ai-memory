@@ -280,6 +280,7 @@ class MemoryConfig(BaseSettings):
     install_dir: Path = Field(
         default_factory=lambda: Path.home() / ".ai-memory",
         description="Installation directory",
+        validation_alias=AliasChoices("AI_MEMORY_INSTALL_DIR", "INSTALL_DIR"),
     )
 
     queue_path: Path = Field(
@@ -910,9 +911,22 @@ class MemoryConfig(BaseSettings):
     )
     @classmethod
     def expand_user_paths(cls, v):
-        """Expand ~ and environment variables in paths."""
+        """Expand ~ and environment variables in paths.
+
+        Guard: if ``~/.ai-memory`` expansion produces ``/.ai-memory`` (HOME=/
+        edge case common in minimal Docker images), raise ValueError. Silent
+        fallback would mask runtime read-only-filesystem errors downstream.
+        Containers should set AI_MEMORY_INSTALL_DIR explicitly.
+        """
         if isinstance(v, str):
-            return Path(os.path.expanduser(os.path.expandvars(v)))
+            v = Path(os.path.expanduser(os.path.expandvars(v)))
+        if isinstance(v, Path) and str(v) == "/.ai-memory":
+            raise ValueError(
+                "install_dir resolved to '/.ai-memory' which indicates HOME=/ "
+                "(common in minimal Docker images where HOME is unset). Set "
+                "AI_MEMORY_INSTALL_DIR explicitly to a writable path "
+                "(e.g. '/app') in the container environment."
+            )
         return v
 
     @field_validator("queue_dir", mode="before")
