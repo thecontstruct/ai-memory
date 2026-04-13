@@ -321,6 +321,43 @@ LOG_LEVEL=WARNING
         assert "$HOME" not in str(config.queue_path)
         assert config.queue_path == Path.home() / ".custom-queue" / "queue.jsonl"
 
+    def test_install_dir_rejects_root_filesystem_expansion(self, monkeypatch):
+        """Regression: HOME=/ causes ~/.ai-memory to expand to /.ai-memory.
+
+        In minimal Docker images where HOME is unset (defaults to /), the
+        default_factory Path.home() / ".ai-memory" resolves to /.ai-memory
+        which is on the read-only root filesystem. The validator must raise
+        rather than silently producing this path, because downstream code
+        (github-sync container in particular) would then hit OSError on every
+        write to install_dir, silently dropping data.
+
+        Caught during Phase B live verification of PR #111 — the bug surfaced
+        only when the github-sync Docker container was rebuilt with PR #111's
+        new code that writes state to install_dir/github-state/ instead of
+        project_root/.audit/state/.
+        """
+        import pytest
+
+        reset_config()
+        monkeypatch.setenv("HOME", "/")
+        # Default_factory will now produce Path("/.ai-memory")
+        with pytest.raises(ValueError, match="/\\.ai-memory"):
+            get_config()
+
+    def test_install_dir_explicit_env_var_bypasses_root_guard(self, monkeypatch):
+        """HOME=/ with explicit AI_MEMORY_INSTALL_DIR works correctly.
+
+        The container fix is to set AI_MEMORY_INSTALL_DIR=/app explicitly.
+        This test verifies that explicit override works even when HOME=/.
+        """
+        reset_config()
+        monkeypatch.setenv("HOME", "/")
+        monkeypatch.setenv("INSTALL_DIR", "/app")
+
+        config = get_config()
+
+        assert config.install_dir == Path("/app")
+
     def test_frozen_config_immutable(self):
         """AC 7.4.1: Frozen config (immutable after creation) with frozen=True."""
         reset_config()
