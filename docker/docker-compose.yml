@@ -491,6 +491,12 @@ services:
       - ${AI_MEMORY_INSTALL_DIR:-${HOME}/.ai-memory}/github-state/logs:/app/.audit/logs
       # Multi-project config directory (PLAN-009)
       - ${AI_MEMORY_INSTALL_DIR:-${HOME}/.ai-memory}/config/projects.d:/config/projects.d:ro
+      # Shared trace buffer for Langfuse span emission. github-sync writes
+      # storage-layer traces here; without this mount writes fail with
+      # read-only filesystem (container image fs at /app is not writable).
+      # Matches classifier-worker pattern (L387). Caught during Phase B
+      # live verification after the install_dir fix unmasked the issue.
+      - ${AI_MEMORY_INSTALL_DIR:-${HOME}/.ai-memory}/trace_buffer:/app/trace_buffer
     depends_on:
       qdrant:
         condition: service_healthy
