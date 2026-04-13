@@ -30,7 +30,7 @@ try:
 
     _VERSION = pkg_version("ai-memory")
 except Exception:
-    _VERSION = "2.3.1"
+    _VERSION = "2.3.2"
 
 # ==============================================================================
 # COUNTERS - Monotonically increasing values
