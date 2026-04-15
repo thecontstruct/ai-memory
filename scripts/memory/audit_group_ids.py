@@ -9,8 +9,12 @@ import os
 import sys
 from pathlib import Path
 
-INSTALL_DIR = os.environ.get("AI_MEMORY_INSTALL_DIR", os.path.expanduser("~/.ai-memory"))
+INSTALL_DIR = os.environ.get(
+    "AI_MEMORY_INSTALL_DIR", os.path.expanduser("~/.ai-memory")
+)
 sys.path.insert(0, os.path.join(INSTALL_DIR, "src"))
+
+from qdrant_client import models
 
 from memory.config import (
     COLLECTION_CODE_PATTERNS,
@@ -22,7 +26,6 @@ from memory.connectors.github.paths import github_state_file, resolve_github_sta
 from memory.group_ids import build_group_id_plan
 from memory.project import normalize_project_name
 from memory.qdrant_client import get_qdrant_client
-from qdrant_client import models
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,7 +47,11 @@ def count_group_id(client, collection: str, group_id: str) -> int:
     result = client.count(
         collection_name=collection,
         count_filter=models.Filter(
-            must=[models.FieldCondition(key="group_id", match=models.MatchValue(value=group_id))]
+            must=[
+                models.FieldCondition(
+                    key="group_id", match=models.MatchValue(value=group_id)
+                )
+            ]
         ),
         exact=True,
     )
@@ -78,7 +85,9 @@ def main() -> int:
     ]:
         print(f"- {collection}: {count_group_id(client, collection, gid)}")
     if plan.github_group_id:
-        print(f"- {COLLECTION_GITHUB}: {count_group_id(client, COLLECTION_GITHUB, plan.github_group_id)}")
+        print(
+            f"- {COLLECTION_GITHUB}: {count_group_id(client, COLLECTION_GITHUB, plan.github_group_id)}"
+        )
     print("")
 
     legacy_rows: list[tuple[str, str, dict[str, int]]] = []
@@ -87,13 +96,17 @@ def main() -> int:
             COLLECTION_CODE_PATTERNS: count_group_id(
                 client, COLLECTION_CODE_PATTERNS, legacy_id
             ),
-            COLLECTION_DISCUSSIONS: count_group_id(client, COLLECTION_DISCUSSIONS, legacy_id),
+            COLLECTION_DISCUSSIONS: count_group_id(
+                client, COLLECTION_DISCUSSIONS, legacy_id
+            ),
         }
         if any(counts.values()):
             legacy_rows.append(("project", legacy_id, counts))
 
     for legacy_id in plan.legacy_github_ids:
-        counts = {COLLECTION_GITHUB: count_group_id(client, COLLECTION_GITHUB, legacy_id)}
+        counts = {
+            COLLECTION_GITHUB: count_group_id(client, COLLECTION_GITHUB, legacy_id)
+        }
         if any(counts.values()):
             legacy_rows.append(("github", legacy_id, counts))
 

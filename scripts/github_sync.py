@@ -24,8 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from memory.config import get_config
 from memory.connectors.github.client import GitHubClient
 from memory.connectors.github.code_sync import CodeBlobSync
-from memory.connectors.github.sync import GitHubSyncEngine
 from memory.connectors.github.paths import resolve_github_state_file
+from memory.connectors.github.sync import GitHubSyncEngine
 
 
 def show_status(config):
@@ -39,7 +39,11 @@ def show_status(config):
         config.github_repo,
         cwd=Path.cwd(),
     )
-    state_dir = sync_state_file.parent if sync_state_file else Path(config.install_dir) / "github-state"
+    state_dir = (
+        sync_state_file.parent
+        if sync_state_file
+        else Path(config.install_dir) / "github-state"
+    )
 
     print("GitHub Sync Status")
     print("=" * 50)

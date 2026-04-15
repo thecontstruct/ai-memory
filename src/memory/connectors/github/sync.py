@@ -74,6 +74,11 @@ from memory.connectors.github.composer import (
     compose_pr_diff,
     compose_pr_review,
 )
+from memory.connectors.github.paths import (
+    github_state_candidates,
+    github_state_file,
+    normalize_github_repo_slug,
+)
 from memory.connectors.github.schema import (
     GITHUB_COLLECTION,
     SOURCE_AUTHORITY_MAP,

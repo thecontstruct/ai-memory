@@ -9,8 +9,12 @@ import os
 import sys
 from pathlib import Path
 
-INSTALL_DIR = os.environ.get("AI_MEMORY_INSTALL_DIR", os.path.expanduser("~/.ai-memory"))
+INSTALL_DIR = os.environ.get(
+    "AI_MEMORY_INSTALL_DIR", os.path.expanduser("~/.ai-memory")
+)
 sys.path.insert(0, os.path.join(INSTALL_DIR, "src"))
+
+from qdrant_client import models
 
 from memory.config import (
     COLLECTION_CODE_PATTERNS,
@@ -18,11 +22,10 @@ from memory.config import (
     COLLECTION_GITHUB,
     get_config,
 )
-from memory.connectors.github.paths import github_state_file, github_state_candidates
+from memory.connectors.github.paths import github_state_candidates, github_state_file
 from memory.group_ids import build_group_id_plan
 from memory.project import normalize_project_name
 from memory.qdrant_client import get_qdrant_client
-from qdrant_client import models
 
 
 def parse_args() -> argparse.Namespace:
@@ -82,14 +85,20 @@ def count_group_id(client, collection: str, group_id: str) -> int:
     result = client.count(
         collection_name=collection,
         count_filter=models.Filter(
-            must=[models.FieldCondition(key="group_id", match=models.MatchValue(value=group_id))]
+            must=[
+                models.FieldCondition(
+                    key="group_id", match=models.MatchValue(value=group_id)
+                )
+            ]
         ),
         exact=True,
     )
     return result.count
 
 
-def migrate_state_file(config, github_repo: str | None, cwd: str) -> tuple[str, str] | None:
+def migrate_state_file(
+    config, github_repo: str | None, cwd: str
+) -> tuple[str, str] | None:
     if not github_repo:
         return None
 
@@ -104,7 +113,9 @@ def migrate_state_file(config, github_repo: str | None, cwd: str) -> tuple[str, 
     return None
 
 
-def planned_state_file_move(config, github_repo: str | None, cwd: str) -> tuple[str, str] | None:
+def planned_state_file_move(
+    config, github_repo: str | None, cwd: str
+) -> tuple[str, str] | None:
     if not github_repo:
         return None
 
@@ -178,7 +189,9 @@ def main() -> int:
         for legacy_id in plan.legacy_github_ids:
             count = count_group_id(client, COLLECTION_GITHUB, legacy_id)
             if count:
-                actions.append((COLLECTION_GITHUB, legacy_id, plan.github_group_id, count))
+                actions.append(
+                    (COLLECTION_GITHUB, legacy_id, plan.github_group_id, count)
+                )
 
     print("## Group ID Migration")
     print("")
@@ -195,10 +208,18 @@ def main() -> int:
             else planned_state_file_move(config, config.github_repo, args.cwd)
         )
         if project_id_update:
-            label = "Updated AI_MEMORY_PROJECT_ID" if args.apply else "Planned AI_MEMORY_PROJECT_ID update"
+            label = (
+                "Updated AI_MEMORY_PROJECT_ID"
+                if args.apply
+                else "Planned AI_MEMORY_PROJECT_ID update"
+            )
             if args.apply:
-                apply_project_id_update(env_file, project_id_update[1], project_id_update[2])
-            print(f"{label}: {project_id_update[1]} -> {project_id_update[2]} ({project_id_update[0]})")
+                apply_project_id_update(
+                    env_file, project_id_update[1], project_id_update[2]
+                )
+            print(
+                f"{label}: {project_id_update[1]} -> {project_id_update[2]} ({project_id_update[0]})"
+            )
         if state_move:
             label = "Moved state file" if args.apply else "Planned state file move"
             print(f"{label}: {state_move[0]} -> {state_move[1]}")
@@ -234,7 +255,9 @@ def main() -> int:
         print("State file: no move required")
 
     if project_id_update:
-        if apply_project_id_update(env_file, project_id_update[1], project_id_update[2]):
+        if apply_project_id_update(
+            env_file, project_id_update[1], project_id_update[2]
+        ):
             print(
                 f"Updated AI_MEMORY_PROJECT_ID: {project_id_update[1]} -> {project_id_update[2]} ({project_id_update[0]})"
             )

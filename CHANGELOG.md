@@ -5,6 +5,85 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.2] - 2026-04-13
+
+Security patches, group_id normalization, Phase B live-verify fixes, and canonical shell wrapper.
+
+### Added
+- **`group_id` normalization** (PR #111): `group_id` values normalized at config load time; malformed or legacy IDs are sanitized before Qdrant tenant routing.
+- **Group ID audit and migration tools** (PR #111): New `scripts/audit_group_ids.py` and `scripts/migrate_group_ids.py` for inspecting and correcting `group_id` values in existing Qdrant collections.
+- **`run-with-env.sh` canonical wrapper** (PR #110, cherry-picked as `4b1bb15`): Shell script that sources `.env` and executes hook scripts under the correct virtualenv. Replaces ad-hoc env sourcing in individual skill scripts.
+- **Script-backed skills** (PR #110, cherry-picked as `4b1bb15`): `aim-status`, `aim-save-handoff`, and `aim-save-insight` skills now delegate to shell scripts via `run-with-env.sh` for consistent environment handling.
+
+### Fixed
+- **`run-with-env.sh` `.env` quote stripping** (PR #111, commit `ba4b916`): `.env` values surrounded by quotes (e.g., `"true"`) triggered pydantic `ValidationError` on boolean fields. Wrapper now strips surrounding single and double quotes from all sourced values.
+- **`install_dir` catastrophic regression in github-sync container** (PR #111, commit `a8ba885`): `install_dir` was computed as `"/.ai-memory"` inside the container, resolving to filesystem root. Fixed via validator guard, `AI_MEMORY_INSTALL_DIR=/app` in Docker Compose, and github-state volume remounted to `/app/github-state`.
+- **`config.py` `AliasChoices` binding for `install_dir`** (PR #111, commit `2e07e4c`): `install_dir` field now correctly bound to `AI_MEMORY_INSTALL_DIR` canonical env var via pydantic `AliasChoices`.
+- **`trace_buffer` volume missing from github-sync service** (PR #111, commit `3be8743`): github-sync container attempted writes to trace buffer path on a read-only filesystem layer. Volume mount added to `docker-compose.yml`.
+
+### Security
+- **pygments ReDoS** (GHSA-5239-wwwm-4pmq, LOW): `pygments` 2.19.2→2.20.0 (PR #99)
+- **anthropic SDK patch — streamlit** (GHSA-w828-4qhx-vxx3, GHSA-q5f5-3gjm-7mfm): `anthropic` 0.86→0.87 in `docker/streamlit/requirements.txt` (PR #105)
+- **anthropic SDK patch — github-sync** (GHSA-w828-4qhx-vxx3, GHSA-q5f5-3gjm-7mfm): `anthropic` 0.86→0.87 in `docker/github-sync/requirements.txt` (PR #107)
+- **Dependency batch patch** (PR #112): `anthropic` 0.86→0.89 (GHSA-w828-4qhx-vxx3, GHSA-q5f5-3gjm-7mfm), `pytest` →9.0.3 (CVE-2025-71176), `uvicorn`/`ruff`/`mypy` minor/patch updates (9 packages total). All 14 open vulnerability alerts closed; `black` HIGH alert auto-resolved via `uv.lock` regeneration.
+
+### Upgrade Instructions
+
+**From v2.3.1 → v2.3.2:**
+
+This release includes changes to the `github-sync` Docker container (baked code + compose configuration) and **requires a container rebuild**, not just an installer Option 1 pass.
+
+1. **Pull the latest release:**
+   ```bash
+   cd /path/to/ai-memory
+   git fetch origin && git checkout main && git pull
+   ```
+
+2. **Run the installer** (Option 1 for existing installations):
+   ```bash
+   ./scripts/install.sh /path/to/your/project
+   # Select: Option 1 — Add project to existing installation
+   ```
+
+3. **Unset `QDRANT_API_KEY` before compose operations** (CRITICAL — pydantic-settings precedence):
+   ```bash
+   unset QDRANT_API_KEY
+   ```
+
+4. **Rebuild the `github-sync` container** (REQUIRED — baked code + compose env changes from PR #111):
+   ```bash
+   cd ~/.ai-memory/docker
+   unset QDRANT_API_KEY   # re-affirm; shell state resets
+   docker compose build --no-cache github-sync
+   docker compose up -d github-sync
+   ```
+
+5. **Verify stack health:**
+   ```bash
+   # All 17 services healthy
+   docker compose ps | grep -c "healthy"
+   # Expect output: 17
+
+   # github-sync logs clean — no container filesystem or config errors
+   docker compose logs github-sync --tail=30
+   # Expect: no [Errno 30] read-only filesystem errors
+   # Expect: no pydantic.ValidationError
+   # Expect: no install_dir="/.ai-memory" in startup logs
+   ```
+
+6. **(Optional) Run the `group_id` audit + migration tool** if your install has mixed-case repo slugs from an earlier version:
+   ```bash
+   cd /path/to/ai-memory
+   python scripts/memory/audit_group_ids.py          # inspect plan (dry run)
+   python scripts/memory/migrate_group_ids.py --apply  # execute migration
+   ```
+   The tool normalizes legacy mixed-case `group_id` values to canonical lowercase in Qdrant. Safe to skip on fresh installs.
+
+**Important notes:**
+- Always `unset QDRANT_API_KEY` before running `docker compose` commands. Shell env vars override `.env` file values, causing auth mismatches.
+- The `github-sync` container's code is baked into the Docker image — installer Option 1 alone is not sufficient. The `docker compose build --no-cache github-sync` step is mandatory for this release.
+- If the audit tool reports no legacy records, the migration step is a no-op.
+
 ## [2.3.1] - 2026-04-09
 
 Endpoint alignment and documentation accuracy patch.

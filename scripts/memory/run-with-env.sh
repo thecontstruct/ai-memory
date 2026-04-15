@@ -23,6 +23,9 @@ load_env_var() {
     local name="$1"
     local value
     value="$(awk -F= -v key="$name" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE")"
+    # Strip surrounding double or single quotes (common in .env files)
+    value="${value%\"}"; value="${value#\"}"
+    value="${value%\'}"; value="${value#\'}"
     if [ -n "$value" ]; then
         export "$name=$value"
     fi

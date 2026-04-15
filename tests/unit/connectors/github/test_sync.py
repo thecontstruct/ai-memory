@@ -65,7 +65,9 @@ def test_engine_group_id_from_repo():
     ):
         engine = GitHubSyncEngine(config)
     assert engine._group_id == "owner/repo"
-    assert engine._state_file == Path("/tmp/install/github-state/github_sync_state_owner__repo.json")
+    assert engine._state_file == Path(
+        "/tmp/install/github-state/github_sync_state_owner__repo.json"
+    )
 
 
 # -- Helper: create a mock engine for async tests ---------------------

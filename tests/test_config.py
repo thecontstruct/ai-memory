@@ -302,7 +302,10 @@ LOG_LEVEL=WARNING
     def test_path_expansion_tilde(self, monkeypatch):
         """AC 7.4.1: Path expansion for ~ with field_validator."""
         reset_config()
-        monkeypatch.setenv("INSTALL_DIR", "~/custom-ai-memory")
+        # AI_MEMORY_INSTALL_DIR is the canonical alias (higher precedence than
+        # INSTALL_DIR); the test conftest pre-sets it at module load so we must
+        # override it explicitly to exercise tilde expansion.
+        monkeypatch.setenv("AI_MEMORY_INSTALL_DIR", "~/custom-ai-memory")
 
         config = get_config()
 
@@ -320,6 +323,65 @@ LOG_LEVEL=WARNING
         # $HOME should be expanded
         assert "$HOME" not in str(config.queue_path)
         assert config.queue_path == Path.home() / ".custom-queue" / "queue.jsonl"
+
+    def test_install_dir_rejects_root_filesystem_expansion(self, monkeypatch):
+        """Regression: HOME=/ causes ~/.ai-memory to expand to /.ai-memory.
+
+        In minimal Docker images where HOME is unset (defaults to /), the
+        default_factory Path.home() / ".ai-memory" resolves to /.ai-memory
+        which is on the read-only root filesystem. The validator must raise
+        rather than silently producing this path, because downstream code
+        (github-sync container in particular) would then hit OSError on every
+        write to install_dir, silently dropping data.
+
+        Caught during Phase B live verification of PR #111 — the bug surfaced
+        only when the github-sync Docker container was rebuilt with PR #111's
+        new code that writes state to install_dir/github-state/ instead of
+        project_root/.audit/state/.
+        """
+        import pytest
+
+        reset_config()
+        monkeypatch.setenv("HOME", "/")
+        # Delete conftest-set AI_MEMORY_INSTALL_DIR and any INSTALL_DIR to force
+        # the default_factory path (which should then produce /.ai-memory and raise).
+        monkeypatch.delenv("AI_MEMORY_INSTALL_DIR", raising=False)
+        monkeypatch.delenv("INSTALL_DIR", raising=False)
+        with pytest.raises(ValueError, match="/\\.ai-memory"):
+            get_config()
+
+    def test_install_dir_explicit_env_var_bypasses_root_guard(self, monkeypatch):
+        """HOME=/ with explicit AI_MEMORY_INSTALL_DIR works correctly.
+
+        The container fix sets AI_MEMORY_INSTALL_DIR=/app in docker-compose
+        for the github-sync service. This test verifies:
+        1. AliasChoices accepts AI_MEMORY_INSTALL_DIR as the env var name
+        2. The explicit override bypasses the HOME=/ validator guard
+        """
+        reset_config()
+        monkeypatch.setenv("HOME", "/")
+        monkeypatch.setenv("AI_MEMORY_INSTALL_DIR", "/app")
+
+        config = get_config()
+
+        assert config.install_dir == Path("/app")
+
+    def test_install_dir_accepts_legacy_install_dir_alias(self, monkeypatch):
+        """AliasChoices also accepts INSTALL_DIR (legacy field-name form).
+
+        Backward-compat: existing code or configs that set INSTALL_DIR
+        (the field name) rather than AI_MEMORY_INSTALL_DIR (canonical)
+        must keep working. The first-priority alias AI_MEMORY_INSTALL_DIR
+        must be absent for the fallback to apply.
+        """
+        reset_config()
+        monkeypatch.setenv("HOME", "/")
+        monkeypatch.delenv("AI_MEMORY_INSTALL_DIR", raising=False)
+        monkeypatch.setenv("INSTALL_DIR", "/app")
+
+        config = get_config()
+
+        assert config.install_dir == Path("/app")
 
     def test_frozen_config_immutable(self):
         """AC 7.4.1: Frozen config (immutable after creation) with frozen=True."""
