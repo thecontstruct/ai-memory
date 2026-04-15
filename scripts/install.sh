@@ -4515,30 +4515,38 @@ setup_parzival() {
         return 0
     fi
 
-    # Skip Parzival-specific setup in non-interactive mode (CI)
-    if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        log_info "Non-interactive mode — skipping Parzival setup"
+    # Non-interactive CI runs skip Parzival unless INSTALL_PARZIVAL=true
+    local parzival_enable=false
+    if [[ "${INSTALL_PARZIVAL:-}" == "true" ]]; then
+        parzival_enable=true
+        log_info "INSTALL_PARZIVAL=true — enabling Parzival V2 for this project"
+    elif [[ "$NON_INTERACTIVE" == "true" ]]; then
+        log_info "Non-interactive mode — skipping Parzival setup (set INSTALL_PARZIVAL=true to enable)"
         set_env_value "PARZIVAL_ENABLED" "false"
         return 0
+    else
+        echo ""
+        echo "══════════════════════════════════════════════════════════"
+        echo "  Parzival Session Agent (Optional)"
+        echo "══════════════════════════════════════════════════════════"
+        echo ""
+        echo "Parzival is a Technical PM & Quality Gatekeeper that provides:"
+        echo "  - Cross-session memory (remembers previous sessions via Qdrant)"
+        echo "  - Project oversight (tracks bugs, specs, decisions)"
+        echo "  - Quality gatekeeping (verification checklists)"
+        echo "  - Parallel agent team dispatch and review cycles"
+        echo ""
+        read -p "Enable Parzival session agent? [y/N] " parzival_choice
+
+        local parzival_choice_normalized
+        parzival_choice_normalized=$(printf '%s' "$parzival_choice" | tr '[:upper:]' '[:lower:]')
+
+        if [[ "$parzival_choice_normalized" =~ ^(y|yes)$ ]]; then
+            parzival_enable=true
+        fi
     fi
 
-    echo ""
-    echo "══════════════════════════════════════════════════════════"
-    echo "  Parzival Session Agent (Optional)"
-    echo "══════════════════════════════════════════════════════════"
-    echo ""
-    echo "Parzival is a Technical PM & Quality Gatekeeper that provides:"
-    echo "  - Cross-session memory (remembers previous sessions via Qdrant)"
-    echo "  - Project oversight (tracks bugs, specs, decisions)"
-    echo "  - Quality gatekeeping (verification checklists)"
-    echo "  - Parallel agent team dispatch and review cycles"
-    echo ""
-    read -p "Enable Parzival session agent? [y/N] " parzival_choice
-
-    local parzival_choice_normalized
-    parzival_choice_normalized=$(printf '%s' "$parzival_choice" | tr '[:upper:]' '[:lower:]')
-
-    if [[ "$parzival_choice_normalized" =~ ^(y|yes)$ ]]; then
+    if [[ "$parzival_enable" == "true" ]]; then
         log_info "Setting up Parzival V2..."
 
         # Detect existing version for upgrade handling
