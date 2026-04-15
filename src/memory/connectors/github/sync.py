@@ -84,11 +84,6 @@ from memory.connectors.github.schema import (
     SOURCE_AUTHORITY_MAP,
     compute_content_hash,
 )
-from memory.connectors.github.paths import (
-    github_state_candidates,
-    github_state_file,
-    normalize_github_repo_slug,
-)
 from memory.models import MemoryType
 from memory.project import normalize_org_repo_slug
 from memory.qdrant_client import get_qdrant_client
