@@ -10,8 +10,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`INSTALL_PARZIVAL=true` install-time opt-in** (PR #124, contributed by Phil): Enables the full Parzival V2 setup path during `NON_INTERACTIVE=true` installer runs (CI / add-project automation). Default non-interactive behavior is unchanged — still skips Parzival unless opted in.
 
+### Changed
+- **Dependency floor: `langfuse>=4.0.6,<4.1.0`** (PR #120): Tightened the langfuse Python SDK lower bound from `4.0.0` to `4.0.6`. Picks up upstream patches v4.0.1-v4.0.6 including asyncio.CancelledError handling in `@observe` (v4.0.2), scores session ID parsing fix (v4.0.2), and experiments propagation context maintenance (v4.0.2). No API-surface changes affecting our V3 SDK usage (`get_client`, `observe`, `propagate_attributes`, `Langfuse`, `span_filter`).
+- **GitHub Actions group bump** (PR #113): Bumped 2 actions in `.github/workflows/community.yml`, `dependabot-auto-merge.yml`, `release.yml`. CI-only impact; no runtime change.
+
 ### Documentation
 - **INSTALL.md non-interactive Parzival section** (PR #124 follow-up): Documented the new `INSTALL_PARZIVAL=true` env var alongside the existing `NON_INTERACTIVE=true` guidance.
+
+### Upgrade Instructions
+
+**From v2.3.2 → Unreleased:**
+
+This release includes a langfuse SDK floor bump that **requires a Python container rebuild** for the change to take effect at runtime. Pure config/docs changes need only the standard installer Option 1 update.
+
+1. **Pull the latest from main:**
+   ```bash
+   cd /path/to/ai-memory
+   git fetch origin && git checkout main && git pull
+   ```
+
+2. **Run the installer Option 1 (update existing installation):**
+   ```bash
+   ./scripts/install.sh /path/to/your/project
+   # Choose Option 1 when prompted
+   ```
+
+3. **Rebuild Python containers to pick up `langfuse>=4.0.6`:**
+   ```bash
+   cd ~/.ai-memory/docker
+   unset QDRANT_API_KEY    # avoid shell-env override of .env
+   docker compose -f docker-compose.yml -f docker-compose.langfuse.yml --profile '*' \
+     build --no-cache classifier-worker trace-flush-worker evaluator-scheduler monitoring-api streamlit
+   docker compose -f docker-compose.yml -f docker-compose.langfuse.yml --profile '*' up -d
+   ```
+
+4. **Verify the langfuse version pickup:**
+   ```bash
+   docker exec ai-memory-classifier-worker pip show langfuse | grep Version
+   # Expect: Version: 4.0.6 (or higher within <4.1.0)
+   ```
+
+5. **Verify all 17 ai-memory containers report healthy:**
+   ```bash
+   docker ps --format '{{.Names}}\t{{.Status}}' | grep ai-memory | grep -v '(healthy)'
+   # Expect: zero output (all healthy)
+   ```
+
+**Optional new flag for non-interactive installs:**
+
+```bash
+NON_INTERACTIVE=true INSTALL_PARZIVAL=true \
+  AI_MEMORY_ADD_PROJECT_MODE=true \
+  GITHUB_REPO=my-org/my-project \
+  ./scripts/install.sh /path/to/project my-org/my-project
+```
+
+`INSTALL_PARZIVAL=true` enables the full Parzival V2 setup path during CI / scripted installs. See `INSTALL.md` for full details.
+
+**Skipped for this upgrade**: GitHub Actions bump (#113) is CI-only and applies on the next workflow trigger automatically.
 
 ## [2.3.2] - 2026-04-13
 
