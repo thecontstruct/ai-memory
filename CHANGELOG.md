@@ -5,6 +5,14 @@ All notable changes to AI Memory Module will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`INSTALL_PARZIVAL=true` install-time opt-in** (PR #124, contributed by Phil): Enables the full Parzival V2 setup path during `NON_INTERACTIVE=true` installer runs (CI / add-project automation). Default non-interactive behavior is unchanged — still skips Parzival unless opted in.
+
+### Documentation
+- **INSTALL.md non-interactive Parzival section** (PR #124 follow-up): Documented the new `INSTALL_PARZIVAL=true` env var alongside the existing `NON_INTERACTIVE=true` guidance.
+
 ## [2.3.2] - 2026-04-13
 
 Security patches, group_id normalization, Phase B live-verify fixes, and canonical shell wrapper.
