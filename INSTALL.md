@@ -402,6 +402,19 @@ NON_INTERACTIVE=true \
 > **Note:** `GITHUB_PROJECT_TOKEN` only applies when adding a project to an existing
 > installation (the installer's 'Add project' option). For initial setup, use `GITHUB_TOKEN` instead.
 
+**Enabling Parzival in non-interactive installs** *(v2.3.3+, PR #124)*
+
+By default, `NON_INTERACTIVE=true` skips Parzival setup and sets `PARZIVAL_ENABLED=false`. Set `INSTALL_PARZIVAL=true` alongside `NON_INTERACTIVE=true` to opt into the full Parzival V2 setup path:
+
+```bash
+NON_INTERACTIVE=true INSTALL_PARZIVAL=true \
+  AI_MEMORY_ADD_PROJECT_MODE=true \
+  GITHUB_REPO=my-org/my-project \
+  ./scripts/install.sh /path/to/project my-org/my-project
+```
+
+> **Note:** `INSTALL_PARZIVAL` only enables Parzival when its value is the literal string `true`. Any other value (including `1`, `yes`, or unset) leaves the default skip behavior in place. In interactive installs, setting `INSTALL_PARZIVAL=true` skips the y/N prompt and enables Parzival directly; without it, the installer prompts as usual.
+
 **Token Resolution Order**
 
 The sync engine resolves tokens in this order:
